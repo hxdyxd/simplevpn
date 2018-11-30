@@ -12,9 +12,9 @@ all:
 	$(CC) -o $(CLIENT_OBJFILE) -I./src $(FILE_LIST) ./src/tap_client.c $(LIBS)
 	$(CC) -o $(SWITCH_OBJFILE) -I./src $(FILE_LIST) ./src/cache_table.c ./src/switch.c $(LIBS)
 
-testcrypto:
+testall:
 	$(CC) -o $(OBJTEST) ./src/crypto.c ./test/$(OBJTEST).c -I./src $(LIBS)
 	./$(OBJTEST)
 
 clean:
-	rm -f $(OBJFILE)
+	rm -f $(OBJTEST) $(CLIENT_OBJFILE) $(SWITCH_OBJFILE)
