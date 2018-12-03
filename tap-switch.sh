@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 PHY_DEV="eth0"
 TAP_DEV="tap0"
