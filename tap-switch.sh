@@ -10,6 +10,22 @@ SERVER_IP="127.0.0.1"
 SERVER_PORT="2020"
 SERVER_KEY="12345678"
 
+## green to echo 
+function green(){
+    echo -e "\033[32m$1 \033[0m"
+}
+
+## Error
+function bred(){
+    echo -e "\033[31m\033[01m$1 \033[0m"
+}
+
+## warning
+function byellow(){
+    echo -e "\033[33m\033[01m$1 \033[0m"
+}
+
+
 echo 1 > /proc/sys/net/ipv4/ip_forward
 echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
 
@@ -34,19 +50,3 @@ echo "your remote server: "${SERVER_IP}":"${SERVER_PORT}
 udhcpd ./tap-udhcpd.conf&
 
 green $0 done
-
-
-## green to echo 
-function green(){
-    echo -e "\033[32m$1 \033[0m"
-}
-
-## Error
-function bred(){
-    echo -e "\033[31m\033[01m$1 \033[0m"
-}
-
-## warning
-function byellow(){
-    echo -e "\033[33m\033[01m$1 \033[0m"
-}
