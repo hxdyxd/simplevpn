@@ -27,7 +27,8 @@
 #include <netinet/in.h>
 #include "uthash.h"
 
-#define HWADDR_LEN   (6)
+#define CACHE_TIME_OUT   (3600)
+#define HWADDR_LEN       (6)
 
 struct cache_table_t {
 	uint8_t hwaddr[HWADDR_LEN];

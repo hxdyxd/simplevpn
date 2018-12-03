@@ -97,7 +97,6 @@ void cache_table_print(struct cache_table_t **table)
 {
     struct cache_table_t *s, *tmp;
     struct timeval cache_tv;
-    uint64_t time_dif;
     uint8_t addr_buf[100];
     if(table == NULL) {
 		return;
@@ -106,7 +105,12 @@ void cache_table_print(struct cache_table_t **table)
         cache_tv.tv_sec = 0;
     }
     HASH_ITER(hh, *table, s, tmp) {
-    	time_dif = cache_tv.tv_sec - s->time;
+    	uint64_t time_dif = cache_tv.tv_sec - s->time;
+    	if(time_dif > CACHE_TIME_OUT) {
+    		HASH_DEL( *table, s);  /* user: pointer to deletee */
+			free(s);             /* optional; it's up to you! */
+    		continue;
+    	}
 		socklen_t sin_size;
 		const char *ip;
 		uint16_t port;
