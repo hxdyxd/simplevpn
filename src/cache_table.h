@@ -34,7 +34,7 @@ struct cache_table_t {
 	uint8_t hwaddr[HWADDR_LEN];
 	uint64_t time;
 	struct sockaddr_storage addr;
-	UT_hash_handle hh;         /* makes this structure hashable */
+	UT_hash_handle hh;          /* makes this structure hashable */
 	UT_hash_handle hh_tmp;
 };
 
@@ -45,8 +45,8 @@ void cache_table_delete_all(struct cache_table_t **table);
 int cache_table_count(struct cache_table_t **table);
 void cache_table_print(struct cache_table_t **table);
 void cache_table_iter_once(struct cache_table_t **table,
-						   void (*call_user_fun)(struct cache_table_t *, void *p),
-						   void *p
+							void (*call_user_fun)(struct cache_table_t *, void *p),
+							void *p
 );
 
 #endif

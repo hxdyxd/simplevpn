@@ -69,7 +69,7 @@ int crypto_decrypt(uint8_t *out_buf, uint8_t *in_buf, int in_len)
 	int err = crypto_aead_chacha20poly1305_ietf_decrypt(out_buf, &out_len, NULL,
 													 in_buf + CRYPTO_NOICE_LEN,
 													 (unsigned long long)in_len - CRYPTO_NOICE_LEN,
-												  	NULL, 0, in_buf, key);
+													NULL, 0, in_buf, key);
 	if (err != 0) {
 		return -1;
 	}

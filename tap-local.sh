@@ -10,17 +10,17 @@ SERVER_KEY="12345678"
 
 ## green to echo 
 function green(){
-    echo -e "\033[32m$1 \033[0m"
+	echo -e "\033[32m$1 \033[0m"
 }
 
 ## Error
 function bred(){
-    echo -e "\033[31m\033[01m$1 \033[0m"
+	echo -e "\033[31m\033[01m$1 \033[0m"
 }
 
 ## warning
 function byellow(){
-    echo -e "\033[33m\033[01m$1 \033[0m"
+	echo -e "\033[33m\033[01m$1 \033[0m"
 }
 
 killall -9 simplevpn-client
@@ -46,7 +46,7 @@ if [ -n "$PHY_GW" ]; then
 	echo "delete your default gateway: "${PHY_GW}
 fi
 if [ -z "$PHY_GW" ]; then 
-    byellow "[warn] not found default gateway of "${PHY_DEV}
+	byellow "[warn] not found default gateway of "${PHY_DEV}
 fi
 
 echo "your remote server: "${SERVER_IP}":"${SERVER_PORT}

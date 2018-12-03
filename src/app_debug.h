@@ -24,23 +24,23 @@
 					printf("\033[40;32m[%d]\033[0m \033[2;40;33m%s(%d)\033[0m: ",\
 					 TIME_COUNT(), __FUNCTION__, __LINE__);\
 					printf("\033[1;40;31mERROR\033[0m ");\
-                    printf(__VA_ARGS__);\
-               		syslog(LOG_ERR, __VA_ARGS__);}
+					printf(__VA_ARGS__);\
+					syslog(LOG_ERR, __VA_ARGS__);}
 
 #define APP_WARN(...) if(1) {\
-                    struct timeval debug_tv;gettimeofday(&debug_tv,NULL);\
+					struct timeval debug_tv;gettimeofday(&debug_tv,NULL);\
 					printf("\033[40;32m[%d]\033[0m \033[2;40;33m%s(%d)\033[0m: ",\
 					TIME_COUNT(), __FUNCTION__, __LINE__);\
 					printf("\033[1;40;33mWARN\033[0m ");\
-                    printf(__VA_ARGS__);\
-                	syslog(LOG_WARNING, __VA_ARGS__);}
+					printf(__VA_ARGS__);\
+					syslog(LOG_WARNING, __VA_ARGS__);}
 
 #define APP_DEBUG(...) if(1) {\
-                    struct timeval debug_tv;gettimeofday(&debug_tv,NULL);\
+					struct timeval debug_tv;gettimeofday(&debug_tv,NULL);\
 					printf("\033[40;32m[%d]\033[0m \033[2;40;33m%s(%d)\033[0m: ",\
 					 TIME_COUNT(), __FUNCTION__, __LINE__);\
-                    printf(__VA_ARGS__);\
-                    syslog(LOG_DEBUG, __VA_ARGS__);}
+					printf(__VA_ARGS__);\
+					syslog(LOG_DEBUG, __VA_ARGS__);}
 
 
 

@@ -90,50 +90,50 @@ int cache_table_count(struct cache_table_t **table)
 	if(table == NULL) {
 		return 0;
 	}
-    return HASH_COUNT(*table);
+	return HASH_COUNT(*table);
 }
 
 void cache_table_print(struct cache_table_t **table)
 {
-    struct cache_table_t *s, *tmp;
-    struct timeval cache_tv;
-    uint8_t addr_buf[100];
-    if(table == NULL) {
+	struct cache_table_t *s, *tmp;
+	struct timeval cache_tv;
+	uint8_t addr_buf[100];
+	if(table == NULL) {
 		return;
 	}
 	if(gettimeofday(&cache_tv, NULL) < 0) {
-        cache_tv.tv_sec = 0;
-    }
-    HASH_ITER(hh, *table, s, tmp) {
-    	uint64_t time_dif = cache_tv.tv_sec - s->time;
-    	if(time_dif > CACHE_TIME_OUT) {
-    		HASH_DEL( *table, s);  /* user: pointer to deletee */
+		cache_tv.tv_sec = 0;
+	}
+	HASH_ITER(hh, *table, s, tmp) {
+		uint64_t time_dif = cache_tv.tv_sec - s->time;
+		if(time_dif > CACHE_TIME_OUT) {
+			HASH_DEL( *table, s);  /* user: pointer to deletee */
 			free(s);             /* optional; it's up to you! */
-    		continue;
-    	}
+			continue;
+		}
 		socklen_t sin_size;
 		const char *ip;
 		uint16_t port;
 		if(s->addr.ss_family == AF_INET) {
-		    sin_size = sizeof(struct sockaddr_in);
-		    struct sockaddr_in *addr_v4 = (struct sockaddr_in *)&s->addr;
-		    port = ntohs(addr_v4->sin_port);
-		    ip = inet_ntop(s->addr.ss_family, &addr_v4->sin_addr, addr_buf, sin_size);
+			sin_size = sizeof(struct sockaddr_in);
+			struct sockaddr_in *addr_v4 = (struct sockaddr_in *)&s->addr;
+			port = ntohs(addr_v4->sin_port);
+			ip = inet_ntop(s->addr.ss_family, &addr_v4->sin_addr, addr_buf, sin_size);
 		} else if(s->addr.ss_family == AF_INET6) {
-		    sin_size = sizeof(struct sockaddr_in6);
-		    struct sockaddr_in6 *addr_v6 = (struct sockaddr_in6 *)&s->addr;
-		    port = ntohs(addr_v6->sin6_port);
-		    ip = inet_ntop(s->addr.ss_family, &addr_v6->sin6_addr, addr_buf, sin_size);
+			sin_size = sizeof(struct sockaddr_in6);
+			struct sockaddr_in6 *addr_v6 = (struct sockaddr_in6 *)&s->addr;
+			port = ntohs(addr_v6->sin6_port);
+			ip = inet_ntop(s->addr.ss_family, &addr_v6->sin6_addr, addr_buf, sin_size);
 		} else {
-		    printf("Unknown AF\n");
-		    continue;
+			printf("Unknown AF\n");
+			continue;
 		}
 
-        printf("|addr=%s:%d\t hw=%02x:%02x:%02x:%02x:%02x:%02x\t time=%lld\n",
-         ip, port,
+		printf("|addr=%s:%d\t hw=%02x:%02x:%02x:%02x:%02x:%02x\t time=%lld\n",
+		 ip, port,
 		 s->hwaddr[0],s->hwaddr[1],s->hwaddr[2],s->hwaddr[3],s->hwaddr[4],s->hwaddr[5],
 		 (long long int)time_dif );
-    }
+	}
 }
 
 static int cache_table_addr_add(struct cache_table_t **table, struct cache_table_t *t)
@@ -167,23 +167,23 @@ void cache_table_iter_once(struct cache_table_t **table,
 						   void (*call_user_fun)(struct cache_table_t *, void *p),
 						   void *p)
 {
-    struct cache_table_t *s, *tmp;
-    struct cache_table_t *table_addr = NULL;
-    if(table == NULL) {
+	struct cache_table_t *s, *tmp;
+	struct cache_table_t *table_addr = NULL;
+	if(table == NULL) {
 		return;
 	}
-    HASH_ITER(hh, *table, s, tmp) {
-    	int r = cache_table_addr_add(&table_addr, s);
-    	if(r == 1 || r < 0) {
-    		continue;
-    	}
-        //printf("hwaddr:%02x:%02x:%02x:%02x:%02x:%02x time:%lld count:%d\n",
+	HASH_ITER(hh, *table, s, tmp) {
+		int r = cache_table_addr_add(&table_addr, s);
+		if(r == 1 || r < 0) {
+			continue;
+		}
+		//printf("hwaddr:%02x:%02x:%02x:%02x:%02x:%02x time:%lld count:%d\n",
 		// s->hwaddr[0],s->hwaddr[1],s->hwaddr[2],s->hwaddr[3],s->hwaddr[4],s->hwaddr[5],
 		// (long long int)s->time,
 		// cache_table_count(table) );
-        call_user_fun(s, p);
-    }
-    cache_table_addr_delete_all(&table_addr);
+		call_user_fun(s, p);
+	}
+	cache_table_addr_delete_all(&table_addr);
 }
 
 #if TEST
