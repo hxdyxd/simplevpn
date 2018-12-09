@@ -8,6 +8,11 @@ SERVER_IP="127.0.0.1"
 SERVER_PORT="2020"
 SERVER_KEY="12345678"
 
+PHY_REALY_GW="10.9.0.1"
+PHY_REALY_NETMASK="255.255.255.0"
+PHY_REALY_NET="10.9.0.0/24"
+
+
 ## green to echo 
 function green(){
 	echo -e "\033[32m$1 \033[0m"
@@ -49,6 +54,22 @@ if [ -z "$PHY_GW" ]; then
 	byellow "[warn] not found default gateway of "${PHY_DEV}
 fi
 
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
+echo 1 > /proc/sys/net/ipv6/conf/default/forwarding
+
+ifconfig $PHY_DEV:1 $PHY_REALY_GW netmask $PHY_REALY_NETMASK up
+
+iptables -t nat -F POSTROUTING
+iptables -F FORWARD
+
+iptables -P FORWARD ACCEPT
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -t nat -A POSTROUTING -s $PHY_REALY_NET -o $TAP_DEV -j MASQUERADE
+
+iptables -t mangle -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
 echo "your remote server: "${SERVER_IP}":"${SERVER_PORT}
+echo "your local gw server: "${PHY_REALY_GW}
 
 green "$0 done"

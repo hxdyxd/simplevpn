@@ -28,6 +28,7 @@ function byellow(){
 
 echo 1 > /proc/sys/net/ipv4/ip_forward
 echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
+echo 1 > /proc/sys/net/ipv6/conf/default/forwarding
 
 killall -9 simplevpn-client
 ./simplevpn-client -s $SERVER_IP -p $SERVER_PORT -k $SERVER_KEY &
@@ -38,6 +39,7 @@ ifconfig $TAP_DEV $TAP_IP netmask 255.255.255.0
 ifconfig $TAP_DEV mtu $TAP_MTU
 
 iptables -t nat -F POSTROUTING
+iptables -F FORWARD
 
 iptables -P FORWARD ACCEPT
 iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
