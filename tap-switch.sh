@@ -30,8 +30,8 @@ echo 1 > /proc/sys/net/ipv4/ip_forward
 echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
 echo 1 > /proc/sys/net/ipv6/conf/default/forwarding
 
-killall -9 simplevpn-client
-./simplevpn-client -s $SERVER_IP -p $SERVER_PORT -k $SERVER_KEY &
+killall -9 simplevpn
+./simplevpn -m client -s $SERVER_IP -p $SERVER_PORT -k $SERVER_KEY &
 
 sleep 1
 

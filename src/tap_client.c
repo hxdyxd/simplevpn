@@ -19,7 +19,11 @@
  * along with simplevpn; see the file COPYING. If not, see
  * <http://www.gnu.org/licenses/>.
  */
+#include "app_debug.h"
 
+#ifndef DISABLE_CLIENT
+
+#include <linux/if_tun.h>
 #include <sys/types.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -34,19 +38,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <net/if.h>
-
-#include <linux/if_tun.h>
-#include "app_debug.h"
 #include "crypto.h"
 
-#define VERSION "0.1.1"
-
-
 #define BUF_SIZE 2000
-#define DEFAULT_SERVER_HOST  "127.0.0.1"
-#define DEFAULT_SERVER_PORT        2020
-#define DEFAULT_PASSWORD     "12345678"
 
+int vpn_udp_alloc(int, const char *, int, struct sockaddr_storage *, socklen_t*);
 
 int tun_alloc(int flags)
 {
@@ -71,58 +67,6 @@ int tun_alloc(int flags)
 	return fd;
 }
 
-int vpn_udp_alloc(int if_bind, const char *host, int port,
-				  struct sockaddr_storage *addr, socklen_t* addrlen) {
-	struct addrinfo hints;
-	struct addrinfo *res;
-	int sock, r, flags;
-
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_socktype = SOCK_DGRAM;
-	hints.ai_protocol = IPPROTO_UDP;
-	if (0 != (r = getaddrinfo(host, NULL, &hints, &res))) {
-		APP_ERROR("getaddrinfo: %s\n", gai_strerror(r));
-		return -1;
-	}
-
-	if (res->ai_family == AF_INET)
-		((struct sockaddr_in *)res->ai_addr)->sin_port = htons(port);
-	else if (res->ai_family == AF_INET6)
-		((struct sockaddr_in6 *)res->ai_addr)->sin6_port = htons(port);
-	else {
-		APP_ERROR("unknown ai_family %d\n", res->ai_family);
-		freeaddrinfo(res);
-		return -1;
-	}
-	memcpy(addr, res->ai_addr, res->ai_addrlen);
-	*addrlen = res->ai_addrlen;
-
-	if (-1 == (sock = socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDP))) {
-		APP_ERROR("can not create socket\n");
-		freeaddrinfo(res);
-		return -1;
-	}
-
-	if (if_bind) {
-		if (0 != bind(sock, res->ai_addr, res->ai_addrlen)) {
-			APP_ERROR("can not bind %s:%d\n", host, port);
-			close(sock);
-			freeaddrinfo(res);
-			return -1;
-		}
-	}
-	freeaddrinfo(res);
-
-	flags = fcntl(sock, F_GETFL, 0);
-	if (flags != -1) {
-		if (-1 != fcntl(sock, F_SETFL, flags | O_NONBLOCK))
-			return sock;
-	}
-	APP_ERROR("fcntl error\n");
-
-	close(sock);
-	return -1;
-}
 
 int tap_client_run(const char *server_host, const int server_port, const char *password)
 {
@@ -263,60 +207,12 @@ int tap_client_run(const char *server_host, const int server_port, const char *p
 	return 0;
 }
 
-void usage(void)
+#else
+
+int tap_client_run(const char *server_host, const int server_port, const char *password)
 {
-	PRINTF("\n");
-	PRINTF("simplevpn %s\n\n", VERSION);
-	PRINTF("  usage:\n\n");
-	PRINTF("    simplevpn-client\n");
-	PRINTF("\n");
-	PRINTF(
-		"       -s <server_host>           Host name or IP address of your remote server.\n");
-	PRINTF(
-		"       -p <server_port>           Port number of your remote server.\n");
-	PRINTF(
-		"       -k <password>              Password of your remote server.\n");
-	PRINTF("\n");
-	PRINTF(
-		"       [-v]                       Verbose mode.\n");
-	PRINTF(
-		"       [-h, --help]               Print this message.\n");
-	PRINTF("\n");
+	APP_WARN("client mode unsupport\n");
+	return 0;
 }
 
-int main(int argc, char **argv)
-{
-	char *server_host = DEFAULT_SERVER_HOST;
-	int server_port = DEFAULT_SERVER_PORT;
-	char *password = DEFAULT_PASSWORD;
-	int ch;
-
-	while((ch = getopt(argc, argv, "s:p:k:hv")) != -1) {
-		switch(ch) {
-		case 's':
-			server_host = optarg;
-			break;
-		case 'p':
-			server_port = atoi(optarg);
-			break;
-		case 'k':
-			password = optarg;
-			break;
-		case 'v':
-		case 'h':
-			usage();
-			exit(EXIT_SUCCESS);
-		case '?': // 输入未定义的选项, 都会将该选项的值变为 ?
-			APP_ERROR("unknown option \n");
-			usage();
-			exit(EXIT_FAILURE);
-		}
-	}
-
-	APP_DEBUG("remote server address: %s:%d\n", server_host, server_port);
-	if(strcmp(password, DEFAULT_PASSWORD) == 0) {
-		APP_WARN("use default password: %s\n", password);
-	}
-	
-	return tap_client_run(server_host, server_port, password);
-}
+#endif

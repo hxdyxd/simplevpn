@@ -23,8 +23,8 @@ function byellow(){
 	echo -e "\033[33m\033[01m$1 \033[0m"
 }
 
-killall -9 simplevpn-client
-./simplevpn-client -s $SERVER_IP -p $SERVER_PORT -k $SERVER_KEY &
+killall -9 simplevpn
+./simplevpn -m client -s $SERVER_IP -p $SERVER_PORT -k $SERVER_KEY &
 
 sleep 1
 ifconfig $TAP_DEV mtu $TAP_MTU
