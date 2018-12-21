@@ -81,13 +81,14 @@ int main(int argc, char **argv)
 			break;
 		case 'k':
 			password = optarg;
+			break;
 		case 'm':
 			if(strcmp(optarg, "client") == 0) {
 				mode = MODE_CLIENT;
 			} else if(strcmp(optarg, "switch") == 0) {
 				mode = MODE_SWITCH;
 			} else {
-				APP_ERROR("unknown mode option \n");
+				APP_ERROR("unknown mode option :%s\n", optarg);
 				usage();
 				exit(-1);
 			}
