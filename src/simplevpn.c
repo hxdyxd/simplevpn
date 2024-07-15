@@ -67,7 +67,7 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
 {
     int ch;
 
-    bzero(args, sizeof(struct switch_args_t));
+    memset(args, 0, sizeof(struct switch_args_t));
     args->password = DEFAULT_PASSWORD;
     args->if_bind = 0;
     args->mtu = 1360;

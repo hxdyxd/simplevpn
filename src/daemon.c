@@ -148,13 +148,13 @@ int daemon_stop(const struct switch_args_t *args)
     pid_t pid = (pid_t)atol(buf);
     if (pid > 0) {
         // make sure pid is not zero or negative
-        if (0 != kill(pid, SIGTERM)){
+        if (0 != kill(pid, SIGTERM)) {
             if (errno == ESRCH) {
                 APP_ERROR("not running\n");
                 return 0;
             }
-        APP_ERROR("kill\n");
-        return -1;
+            APP_ERROR("kill\n");
+            return -1;
         }
         stopped = 0;
         // wait for maximum 10s
