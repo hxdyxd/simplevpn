@@ -26,6 +26,7 @@ jobs:
     - name: Makefile
       run: |
         sudo apt install pkg-config libsodium-dev
+        cd src
         make V=1 USE_CRYPTO=1
         ./armemulator -h
         make clean
