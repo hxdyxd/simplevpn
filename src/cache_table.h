@@ -26,27 +26,36 @@
 #include <stdint.h>
 #include <netinet/in.h>
 #include "uthash.h"
+#include "simplevpn.h"
 
-#define CACHE_TIME_OUT   (3600)
+#define CACHE_TIME_OUT   (600 * 1000)
 #define HWADDR_LEN       (6)
 
 struct cache_table_t {
-	uint8_t hwaddr[HWADDR_LEN];
-	uint64_t time;
-	struct sockaddr_storage addr;
-	UT_hash_handle hh;          /* makes this structure hashable */
-	UT_hash_handle hh_tmp;
+    uint32_t time;
+    int forever;
+    uint8_t hwaddr[HWADDR_LEN];
+    uint32_t tx_bytes;
+    uint32_t rx_bytes;
+    uint32_t tx_pks;
+    uint32_t rx_pks;
+    struct switch_ctx_t ctx;
+    UT_hash_handle hh;          /* makes this structure hashable */
+    UT_hash_handle hh_tmp;
 };
 
-void cache_table_add(struct cache_table_t **table, void *hwaddr, uint64_t time, void *addr);
+void cache_table_add(struct cache_table_t **table, void *hwaddr, uint32_t time, struct switch_ctx_t *pctx);
+void cache_table_add_heart(struct cache_table_t **table, uint32_t time, struct switch_ctx_t *pctx);
+void cache_table_add_forever(struct cache_table_t **table, int forever, struct switch_ctx_t *pctx);
 struct cache_table_t *cache_table_find(struct cache_table_t **table, void *hwaddr);
 void cache_table_delete(struct cache_table_t **table, void *hwaddr);
 void cache_table_delete_all(struct cache_table_t **table);
 int cache_table_count(struct cache_table_t **table);
 void cache_table_print(struct cache_table_t **table);
 void cache_table_iter_once(struct cache_table_t **table,
-							void (*call_user_fun)(struct cache_table_t *, void *p),
-							void *p
+                            void (*call_user_fun)(struct cache_table_t *, void *p),
+                            void *p
 );
+int switch_dump_send_route(struct switch_ctx_t *psctx, struct cache_table_t *s, char *msg);
 
 #endif
