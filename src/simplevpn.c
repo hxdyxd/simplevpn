@@ -127,7 +127,7 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
         case 'v':
         case 'h':
             usage();
-            exit(-1);
+            exit(0);
         case '?': // 输入未定义的选项, 都会将该选项的值变为 ?
             APP_ERROR("unknown option \n");
             usage();
@@ -148,7 +148,7 @@ int main(int argc, char **argv)
 
     if (!args.if_bind && !args.has_tap && !args.server_count) {
         usage();
-        exit(-1);
+        exit(0);
     }
 
     if (SWITCH_CMD_START == args.cmd) {
