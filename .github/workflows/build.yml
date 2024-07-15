@@ -28,7 +28,7 @@ jobs:
         sudo apt install pkg-config libsodium-dev
         cd src
         make V=1 USE_CRYPTO=1
-        ./armemulator -h
+        ./simplevpn -h
         make clean
         make V=1 USE_CRYPTO=0
-        ./armemulator -h
+        ./simplevpn -h
