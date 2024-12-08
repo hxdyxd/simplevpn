@@ -12,14 +12,14 @@
 #define WHT "\x1B[37m"
 #define RESET "\x1B[0m"
 
-extern const int log_never;
-extern const int log_fatal;
-extern const int log_error;
-extern const int log_warn;
-extern const int log_info;
-extern const int log_debug;
-extern const int log_trace;
-extern const int log_end;
+#define log_never   0
+#define log_fatal   1
+#define log_error   2
+#define log_warn    3
+#define log_info    4
+#define log_debug   5
+#define log_trace   6
+#define log_end     7
 
 
 extern int log_level;
@@ -33,7 +33,6 @@ extern int enable_log_color;
 #define mylog(...) log0(__FILE__, __FUNCTION__, __LINE__, __VA_ARGS__)
 #endif
 
-//#define mylog(__first_argu__dummy_abcde__,...) {;}
 
 void log0(const char* file, const char* function, int line, int level, const char* str, ...);
 

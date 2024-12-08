@@ -19,7 +19,7 @@ OBJS +=  cache_table.o
 
 C_INCLUDES += -I $(shell pwd)/
 
-CFLAGS += -O3 -Wall -g -std=gnu99 $(C_DEFS)
+CFLAGS += -O2 -Wall -g -std=gnu99 $(C_DEFS)
 
 ifeq ($(USE_CRYPTO), 1)
 OBJS +=  crypto.o

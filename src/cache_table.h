@@ -28,34 +28,49 @@
 #include "uthash.h"
 #include "simplevpn.h"
 
-#define CACHE_TIME_OUT   (600 * 1000)
-#define HWADDR_LEN       (6)
+#define CACHE_TIME_OUT           (600 * 1000)
+#define CACHE_ROUTE_TIME_OUT     (60 * 1000)
+#define CACHE_ROUTE_GC_OUT       (40 * 1000)
+#define CACHE_ROUTE_METRIC_MAX   (16)
+#define CACHE_ROUTE_UPDATE_TIME  (10 * 1000)
+#define HWADDR_LEN            (6)
 
-struct cache_table_t {
+struct cache_router_t {
+    uint32_t router_mac;
+    uint32_t dest_router;
+    uint32_t next_hop_router;
     uint32_t time;
-    int forever;
-    uint8_t hwaddr[HWADDR_LEN];
+    uint8_t prefix_length;
+    uint8_t metric;
     uint32_t tx_bytes;
     uint32_t rx_bytes;
     uint32_t tx_pks;
     uint32_t rx_pks;
-    struct switch_ctx_t ctx;
-    UT_hash_handle hh;          /* makes this structure hashable */
-    UT_hash_handle hh_tmp;
+    uint32_t rtt_time;
+    uint32_t rtt_send_time;
+    uint32_t gc_time;
+    uint32_t gc_enable;
+    uint8_t alloced_ctx;
+    int (*add_router)(struct cache_router_t *, int);
+    void *router_data;
+    struct switch_ctx_t *ctx;
+    UT_hash_handle hh;
+    struct cache_router_t **table;
 };
 
-void cache_table_add(struct cache_table_t **table, void *hwaddr, uint32_t time, struct switch_ctx_t *pctx);
-void cache_table_add_heart(struct cache_table_t **table, uint32_t time, struct switch_ctx_t *pctx);
-void cache_table_add_forever(struct cache_table_t **table, int forever, struct switch_ctx_t *pctx);
-struct cache_table_t *cache_table_find(struct cache_table_t **table, void *hwaddr);
-void cache_table_delete(struct cache_table_t **table, void *hwaddr);
-void cache_table_delete_all(struct cache_table_t **table);
-int cache_table_count(struct cache_table_t **table);
-void cache_table_print(struct cache_table_t **table);
-void cache_table_iter_once(struct cache_table_t **table,
-                            void (*call_user_fun)(struct cache_table_t *, void *p),
-                            void *p
-);
-int switch_dump_send_route(struct switch_ctx_t *psctx, struct cache_table_t *s, char *msg);
+#define cache_router_iter(rt,s,tmp) HASH_ITER(hh, *(rt)->table, s, tmp)
+
+void cache_router_add(struct cache_router_t *rt);
+struct cache_router_t *cache_router_find(struct cache_router_t *rt, uint32_t dest_router);
+struct cache_router_t *cache_router_search(struct cache_router_t *rt, uint32_t dest_router);
+struct cache_router_t *cache_router_find_by_addr(struct cache_router_t *rt, struct sockaddr_storage *addr);
+void cache_route_printall(struct cache_router_t *rt);
+int cache_router_count(struct cache_router_t *rt);
+void cache_router_delete_all(struct cache_router_t *rt);
+void cache_route_iter(struct cache_router_t *rt,
+                           void (*call_user_fun)(const struct cache_router_t *, struct cache_router_t *, void *p),
+                           void *p);
+
+int switch_dump_send_router(struct switch_ctx_t *psctx, struct cache_router_t *s, char *msg);
 
 #endif

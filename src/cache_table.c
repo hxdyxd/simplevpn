@@ -43,46 +43,57 @@ static int switch_dump_ctx__(struct switch_ctx_t *psctx, char *msg, void *buff, 
     uint16_t port = 0;
     char addr_buf[INET6_ADDRSTRLEN];
     if (SWITCH_TAP == psctx->type) {
-        return snprintf(buff, len, "%s !type=%d fd=%d ifname=%s",
-         msg, psctx->type,
+        return snprintf(buff, len, "%s!TUN fd=%d ifname=%s",
+         msg,
          psctx->tap.fd, psctx->tap.ifname);
     }
 
     if (SWITCH_UDP == psctx->type) {
         vpn_udp_ntop(&psctx->udp.addr, addr_buf, sizeof(addr_buf), &ip, &port);
 
-        return snprintf(buff, len, "%s |type=%d fd=%d peer=%s:%u",
-         msg, psctx->type,
+        return snprintf(buff, len, "%s|UDP.%s fd=%d peer=%s:%u",
+         msg,
+         psctx->tcp.if_bind ? "S" : "C", 
          psctx->udp.sock, ip, port);
     }
+
+    if (SWITCH_TCP == psctx->type) {
+        vpn_udp_ntop(&psctx->tcp.addr, addr_buf, sizeof(addr_buf), &ip, &port);
+
+        return snprintf(buff, len, "%s|TCP.%s%s fd=%d peer=%s:%u ws=%d rs=%d",
+         msg, 
+         psctx->tcp.if_bind ? "S" : "C", psctx->tcp.if_local ? "L" : "", 
+         psctx->tcp.sock, ip, port, psctx->tcp.write_buffer_size, psctx->tcp.read_buffer_size);
+    }
     return -1;
 }
 
-static int switch_dump_table__(struct cache_table_t *s, char *msg, void *buff, int len)
+static int switch_dump_table__(struct cache_router_t *s, char *msg, void *buff, int len)
 {
-    struct switch_ctx_t *psctx = &s->ctx;
-    char *ip = "";
-    uint16_t port = 0;
-    char addr_buf[INET6_ADDRSTRLEN];
-    if (SWITCH_TAP == psctx->type) {
-        return snprintf(buff, len, "%s !hw=%02x:%02x:%02x:%02x:%02x:%02x fd=%d ifname=%s",
-         msg,
-         s->hwaddr[0],s->hwaddr[1],s->hwaddr[2],s->hwaddr[3],s->hwaddr[4],s->hwaddr[5],
-         s->ctx.tap.fd, s->ctx.tap.ifname);
+    struct in_addr ipaddr;
+    char *dest_ip, *next_ip;
+    int ret = 0;
+    uint32_t cache_time = get_time_ms();
+    uint32_t time_dif = cache_time - (s->gc_enable ? s->gc_time : s->time);
+    if (!s->metric)
+        time_dif = 0;
+    ipaddr.s_addr = htonl(s->dest_router);
+    dest_ip = strdup(inet_ntoa(ipaddr));
+    ipaddr.s_addr = htonl(s->next_hop_router);
+    next_ip = strdup(inet_ntoa(ipaddr));
+    if (!dest_ip || !next_ip) {
+        goto exit;
     }
 
-    if (SWITCH_UDP == psctx->type) {
-        vpn_udp_ntop(&psctx->udp.addr, addr_buf, sizeof(addr_buf), &ip, &port);
-
-        return snprintf(buff, len, "%s |hw=%02x:%02x:%02x:%02x:%02x:%02x fd=%d peer=%s:%u",
-         msg,
-         s->hwaddr[0],s->hwaddr[1],s->hwaddr[2],s->hwaddr[3],s->hwaddr[4],s->hwaddr[5],
-         s->ctx.udp.sock, ip, port);
-    }
-    return -1;
+    ret = snprintf(buff, len, "%sdest=%s/%u next=%s metric=%u rtt=%u %stime=%u",
+             msg, dest_ip, s->prefix_length, next_ip, s->metric, s->rtt_time, s->gc_enable?"gc":"", time_dif);
+exit:
+    free(next_ip);
+    free(dest_ip);
+    return ret;
 }
 
-int switch_dump_send_route(struct switch_ctx_t *psctx, struct cache_table_t *s, char *msg)
+int switch_dump_send_router(struct switch_ctx_t *psctx, struct cache_router_t *s, char *msg)
 {
     int ret = -1;
     char sbuff[128];
@@ -92,270 +103,209 @@ int switch_dump_send_route(struct switch_ctx_t *psctx, struct cache_table_t *s, 
     memset(tbuff, 0, sizeof(sbuff));
 
     if (psctx) {
-        ret = switch_dump_ctx__(psctx, "from", sbuff, sizeof(sbuff));
+        ret = switch_dump_ctx__(psctx, "", sbuff, sizeof(sbuff));
         if (ret < 0)
             return ret;
     }
-    ret = switch_dump_table__(s, "to", tbuff, sizeof(tbuff));
-    if (ret < 0)
-        return ret;
 
-    APP_DEBUG("%s %s -> %s\n", msg, sbuff, tbuff);
+    if (s) {
+        ret = switch_dump_table__(s, "", tbuff, sizeof(tbuff));
+        if (ret < 0)
+            return ret;
+    }
+
+    APP_INFO("%s %s -> %s\n", msg, sbuff, tbuff);
     return 0;
 }
 
-void cache_table_add(struct cache_table_t **table, void *hwaddr, uint32_t time, struct switch_ctx_t *pctx)
+int switch_router_dump(struct cache_router_t *s, char *msg)
 {
-    int add = 0;
-    struct cache_table_t *s;
-    if(table == NULL || hwaddr == NULL || pctx == NULL) {
+    char sbuff[128];
+    char tbuff[128];
+    memset(sbuff, 0, sizeof(sbuff));
+    memset(tbuff, 0, sizeof(sbuff));
+
+    if (s->ctx)
+        switch_dump_ctx__(s->ctx, "", sbuff, sizeof(sbuff));
+    else
+        strncpy(sbuff, "none", sizeof(sbuff));
+    switch_dump_table__(s, "", tbuff, sizeof(tbuff));
+
+    APP_INFO("%s %s %s tx=%u\n",
+             msg, tbuff, sbuff, s->tx_bytes);
+    return 0;
+}
+
+void cache_router_add(struct cache_router_t *rt)
+{
+    struct cache_router_t *s;
+    int new_add = 0;
+    if (!rt || !rt->router_mac) {
+        APP_WARN("add router fail\n");
         return;
     }
-    HASH_FIND( hh, *table, hwaddr, HWADDR_LEN, s);  /* id already in the hash? */
-    if (s==NULL) {
-        s = (struct cache_table_t *)calloc(1, sizeof *s);
-        memcpy(s->hwaddr, hwaddr, HWADDR_LEN);
-        HASH_ADD_KEYPTR( hh, *table, s->hwaddr, HWADDR_LEN, s);
-        add = 1;
+
+    if (rt->dest_router == rt->router_mac && 0 != rt->metric) {
+        APP_WARN("add self dest fail\n");
+        return;
     }
-    s->time = time;
-    s->forever = 0;
-    memcpy(&s->ctx, pctx, sizeof(struct switch_ctx_t));
-    if (add) {
-        switch_dump_send_route(NULL, s, "[add]");
+
+    if (rt->next_hop_router == rt->router_mac && 0 != rt->metric) {
+        APP_WARN("add self next fail\n");
+        return;
+    }
+
+    HASH_FIND_INT(*rt->table, &rt->dest_router, s);
+    if (!s) {
+        if (rt->metric >= CACHE_ROUTE_METRIC_MAX)
+            return;
+        s = (struct cache_router_t *)calloc(1, sizeof *s);
+        s->dest_router = rt->dest_router;
+        s->router_mac = rt->router_mac;
+        s->table = rt->table;
+        HASH_ADD_INT(*rt->table, dest_router, s);
+        new_add = 1;
+    }
+    s->prefix_length = rt->prefix_length;
+    s->next_hop_router = rt->next_hop_router;
+    s->metric = rt->metric;
+    s->time = rt->time;
+    s->rtt_time = s->time - s->rtt_send_time;
+    s->rtt_send_time = rt->rtt_send_time;
+    s->add_router = rt->add_router;
+    s->router_data = rt->router_data;
+
+    if (rt->ctx && SWITCH_UDP == rt->ctx->type && rt->ctx->udp.if_bind) {
+        if (!s->ctx) {
+            s->ctx = malloc(sizeof(struct switch_ctx_t));
+            s->alloced_ctx = 1;
+            APP_DEBUG("alloced ctx %x = %p\n", s->dest_router, rt->ctx);
+        }
+        memcpy(s->ctx, rt->ctx, sizeof(struct switch_ctx_t));
     } else {
-        if (s->ctx.type != pctx->type) {
-            switch_dump_send_route(NULL, s, "[update type]");
-        } else if (SWITCH_UDP == pctx->type) {
-            if (memcmp(&s->ctx.udp.addr, &pctx->udp.addr, sizeof(struct sockaddr_storage)) != 0) {
-                switch_dump_send_route(NULL, s, "[update address]");
-            }
-        } else if (SWITCH_TAP == pctx->type) {
-            if (s->ctx.tap.fd != pctx->tap.fd) {
-                switch_dump_send_route(NULL, s, "[update tap]");
-            }
+        if (s->alloced_ctx) {
+            free(s->ctx);
+            s->ctx = NULL;
+            s->alloced_ctx = 0;
+        }
+        if (s->ctx != rt->ctx) {
+            APP_DEBUG("update ctx %x = %p -> %p\n", s->dest_router, s->ctx, rt->ctx);
+        }
+        s->ctx = rt->ctx;
+    }
+    //memcpy(&s->ctx, &rt->ctx, sizeof(s->ctx));
+
+    if (rt->metric >= CACHE_ROUTE_METRIC_MAX) {
+        s->metric = CACHE_ROUTE_METRIC_MAX;
+        if (!s->gc_enable) {
+            s->gc_enable = 1;
+            s->gc_time = rt->time;
+        }
+    } else {
+        if (s->gc_enable) {
+            s->gc_enable = 0;
+            s->gc_time = rt->time;
         }
     }
+
+    if (s->add_router && (new_add || 0 == s->metric)) {
+        s->add_router(s, 1);
+    }
 }
 
-void cache_table_add_heart(struct cache_table_t **table, uint32_t time, struct switch_ctx_t *pctx)
+int cache_router_count(struct cache_router_t *rt)
 {
-    struct cache_table_t *s;
-    if(table == NULL || SWITCH_UDP != pctx->type || pctx == NULL) {
-        return;
-    }
-    HASH_FIND( hh, *table, &pctx->udp.addr, sizeof(struct sockaddr_storage), s);  /* id already in the hash? */
-    if (s==NULL) {
-        s = (struct cache_table_t *)calloc(1, sizeof *s);
-        memcpy(&s->ctx.udp.addr, &pctx->udp.addr, sizeof(struct sockaddr_storage));
-        HASH_ADD_KEYPTR( hh, *table, &s->ctx.udp.addr, sizeof(struct sockaddr_storage), s);
-    }
-    s->time = time;
-    s->forever = 0;
-    memset(s->hwaddr, 0xff, HWADDR_LEN);
-    memcpy(&s->ctx, pctx, sizeof(struct switch_ctx_t));
+    if(rt->table == NULL)
+        return 0;
+    return HASH_COUNT(*rt->table);
 }
 
-void cache_table_add_forever(struct cache_table_t **table, int forever, struct switch_ctx_t *pctx)
+struct cache_router_t *cache_router_find(struct cache_router_t *rt, uint32_t dest_router)
 {
-    struct cache_table_t *s;
-    if(table == NULL || pctx == NULL) {
-        return;
-    }
-    HASH_FIND_INT(*table, &forever, s);  /* id already in the hash? */
-    if (s==NULL) {
-        s = (struct cache_table_t *)calloc(1, sizeof *s);
-        s->forever = forever;
-        HASH_ADD_INT(*table, forever, s);
-    }
-    s->time = 0;
-    memset(s->hwaddr, 0xff, HWADDR_LEN);
-    memcpy(&s->ctx, pctx, sizeof(struct switch_ctx_t));
-}
-
-struct cache_table_t *cache_table_find(struct cache_table_t **table, void *hwaddr)
-{
-    struct cache_table_t *s;
-    if(table == NULL || hwaddr == NULL) {
-        return NULL;
-    }
-    HASH_FIND( hh, *table, hwaddr, HWADDR_LEN, s);  /* s: output pointer */
+    struct cache_router_t *s;
+    HASH_FIND_INT(*rt->table, &dest_router, s);
     return s;
 }
 
-void cache_table_delete(struct cache_table_t **table, void *hwaddr)
+struct cache_router_t *cache_router_search(struct cache_router_t *rt, uint32_t dest_router)
 {
-    struct cache_table_t *s;
-    if(table == NULL || hwaddr == NULL) {
-        return;
+    struct cache_router_t *s;
+    int i;
+    uint32_t dest_prefix = 0;
+    for (i = 0; i < 32; i++) {
+        dest_prefix = dest_router & (0xffffffff << i);
+        HASH_FIND_INT(*rt->table, &dest_prefix, s);
+        if (s && 32 - i <= s->prefix_length) {
+            break;
+        }
     }
-    HASH_FIND( hh, *table, hwaddr, HWADDR_LEN, s);
-    if(s != NULL) {
-        HASH_DEL( *table, s);  /* user: pointer to deletee */
-        free(s);             /* optional; it's up to you! */
-    }
+    return s;
 }
 
-void cache_table_delete_all(struct cache_table_t **table)
+struct cache_router_t *cache_router_find_by_addr(struct cache_router_t *rt, struct sockaddr_storage *addr)
 {
-    struct cache_table_t *current_table, *tmp;
-    if(table == NULL) {
-        return;
-    }
-    HASH_ITER(hh, *table, current_table, tmp) {
-        HASH_DEL( *table, current_table);  /* delete; users advances to next */
-        free(current_table);            /* optional- if you want to free  */
-    }
+    struct cache_router_t *s;
+    HASH_FIND( hh, *rt->table, addr, sizeof(struct sockaddr_storage), s);
+    return s;
 }
 
-int cache_table_count(struct cache_table_t **table)
+void cache_route_printall(struct cache_router_t *rt)
 {
-    if(table == NULL) {
-        return 0;
-    }
-    return HASH_COUNT(*table);
-}
-
-void cache_table_print(struct cache_table_t **table)
-{
-    struct cache_table_t *s, *tmp;
+    struct cache_router_t *s, *tmp;
     uint32_t cache_time = 0;
-    char addr_buf[INET6_ADDRSTRLEN];
-    if(table == NULL) {
-        return;
-    }
     cache_time = get_time_ms();
 
-    HASH_ITER(hh, *table, s, tmp) {
+    HASH_ITER(hh, *rt->table, s, tmp) {
         uint32_t time_dif = cache_time - s->time;
-        if (s->forever) {
+        if (!s->metric)
             time_dif = 0;
-        } else if(time_dif > CACHE_TIME_OUT) {
-            switch_dump_send_route(NULL, s, "[del]");
-            HASH_DEL( *table, s);  /* user: pointer to deletee */
+        if (time_dif > CACHE_ROUTE_TIME_OUT) {
+            APP_INFO("timeout, dest=%08x next_hop=%08x metric=%u time=%u\n",
+                        s->dest_router, s->next_hop_router, s->metric, time_dif);
+            s->metric = CACHE_ROUTE_METRIC_MAX;
+            if (!s->gc_enable) {
+                s->gc_enable = 1;
+                s->gc_time = cache_time;
+            }
+        }
+        if (s->gc_enable && (cache_time - s->gc_time) > CACHE_ROUTE_GC_OUT) {
+            APP_WARN("delete, dest=%08x next_hop=%08x metric=%u time=%u\n",
+                        s->dest_router, s->next_hop_router, s->metric, time_dif);
+            if (s->add_router) {
+                s->add_router(s, 0);
+            }
+            HASH_DEL(*rt->table, s);  /* user: pointer to deletee */
+            if (s->alloced_ctx && s->ctx)
+                free(s->ctx);
             free(s);             /* optional; it's up to you! */
             continue;
         }
 
-        char *ip = "";
-        uint16_t port = 0;
-        if (SWITCH_TAP == s->ctx.type) {
-            APP_INFO("!hw=%02x:%02x:%02x:%02x:%02x:%02x fd=%d ifname=%s time=%u tx=%u %s\n",
-             s->hwaddr[0],s->hwaddr[1],s->hwaddr[2],s->hwaddr[3],s->hwaddr[4],s->hwaddr[5],
-             s->ctx.tap.fd, s->ctx.tap.ifname, time_dif,
-             s->tx_bytes, s->forever ? "forever": "");
-        }
-
-        if (SWITCH_UDP == s->ctx.type) {
-            vpn_udp_ntop(&s->ctx.udp.addr, addr_buf, sizeof(addr_buf), &ip, &port);
-
-            APP_INFO("|hw=%02x:%02x:%02x:%02x:%02x:%02x fd=%d bind=%d local=%d peer=%s:%u time=%u tx=%u %s\n",
-             s->hwaddr[0],s->hwaddr[1],s->hwaddr[2],s->hwaddr[3],s->hwaddr[4],s->hwaddr[5],
-             s->ctx.udp.sock, s->ctx.udp.if_bind, s->ctx.udp.if_local, ip, port, time_dif,
-             s->tx_bytes, s->forever ? "forever": "");
-        }
+        switch_router_dump(s, "");
     }
 }
 
-/* ipv6 & ipv4 todo... */
-static int cache_table_addr_add(struct cache_table_t **table, struct cache_table_t *t)
-{
-    struct cache_table_t *s;
-    if (table == NULL || t == NULL) {
-        return -1;
-    }
-    HASH_FIND( hh_tmp, *table, &t->ctx.udp.addr, sizeof(struct sockaddr_storage), s);  /* id already in the hash? */
-    if (s==NULL) {
-        s = t;
-        HASH_ADD_KEYPTR( hh_tmp, *table, &s->ctx.udp.addr, sizeof(struct sockaddr_storage), s);
-        return 0;
-    } else {
-        return 1;
-    }
-}
-
-static int cache_table_addr_tapfd(struct cache_table_t **table, struct cache_table_t *t)
-{
-    struct cache_table_t *s;
-    if (table == NULL || t == NULL) {
-        return -1;
-    }
-    HASH_FIND( hh_tmp, *table, &t->ctx.tap.fd, sizeof(t->ctx.tap.fd), s);  /* id already in the hash? */
-    if (s==NULL) {
-        s = t;
-        HASH_ADD_KEYPTR( hh_tmp, *table, &s->ctx.tap.fd, sizeof(t->ctx.tap.fd), s);
-        return 0;
-    } else {
-        return 1;
-    }
-}
-
-static void cache_table_addr_delete_all(struct cache_table_t **table)
-{
-    struct cache_table_t *current_table, *tmp;
-    if(table == NULL) {
-        return;
-    }
-    HASH_ITER(hh_tmp, *table, current_table, tmp) {
-        HASH_DELETE(hh_tmp, *table, current_table);  /* delete; users advances to next */
-    }
-}
-
-void cache_table_iter_once(struct cache_table_t **table,
-                           void (*call_user_fun)(struct cache_table_t *, void *p),
+void cache_route_iter(struct cache_router_t *rt,
+                           void (*call_user_fun)(const struct cache_router_t *, struct cache_router_t *, void *p),
                            void *p)
 {
-    struct cache_table_t *s, *tmp;
-    struct cache_table_t *table_addr = NULL;
-    if(table == NULL) {
-        return;
+    struct cache_router_t *s, *tmp;
+
+    HASH_ITER(hh, *rt->table, s, tmp) {
+        if (s->router_mac == s->dest_router)
+            continue;
+        call_user_fun(rt, s, p);
     }
-    HASH_ITER(hh, *table, s, tmp) {
-        if (SWITCH_TAP == s->ctx.type) {
-            int r = cache_table_addr_tapfd(&table_addr, s);
-            if(r == 1 || r < 0) {
-                continue;
-            }
-        } else if (SWITCH_UDP == s->ctx.type) {
-            int r = cache_table_addr_add(&table_addr, s);
-            if(r == 1 || r < 0) {
-                continue;
-            }
-        }
-        //printf("hwaddr:%02x:%02x:%02x:%02x:%02x:%02x time:%u count:%d\n",
-        // s->hwaddr[0],s->hwaddr[1],s->hwaddr[2],s->hwaddr[3],s->hwaddr[4],s->hwaddr[5],
-        // s->time,
-        // cache_table_count(table) );
-        call_user_fun(s, p);
-    }
-    cache_table_addr_delete_all(&table_addr);
 }
 
-#if TEST
-int main()
+void cache_router_delete_all(struct cache_router_t *rt)
 {
-    struct cache_table_t *t = NULL;
-    struct sockaddr_storage addr = {
-        "123",
-    };
-    
-    cache_table_add(&t, "123456", 12, &addr);
-    cache_table_add(&t, "123456", 12, &addr);
-    cache_table_add(&t, "\0\0\0\0\0\2", 22, &addr);
-    
-    struct cache_table_t *s = cache_table_find(&t, "\0\0\0\0\0\2");
-    if(s == NULL) {
-        printf("not found\n");
-    } else {
-        printf("find hwaddr:%02x:%02x:%02x:%02x:%02x:%02x time:%u \n",
-         s->hwaddr[0],s->hwaddr[1],s->hwaddr[2],s->hwaddr[3],s->hwaddr[4],s->hwaddr[5],
-         s->time);
+    struct cache_router_t *s, *tmp;
+
+    HASH_ITER(hh, *rt->table, s, tmp) {
+        HASH_DEL(*rt->table, s);  /* user: pointer to deletee */
+        if (s->alloced_ctx && s->ctx)
+            free(s->ctx);
+        free(s);             /* optional; it's up to you! */
     }
-    
-    cache_table_delete(&t, "\0\0\0\0\0\2");
-    cache_table_delete_all(&t);
-        
-    cache_table_print(&t);
-    return 0;
 }
-#endif

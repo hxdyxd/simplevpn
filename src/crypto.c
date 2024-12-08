@@ -33,8 +33,8 @@ int crypto_init(void)
 {
     if (-1 == sodium_init())
         return -1;
-    //randombytes_set_implementation(&randombytes_salsa20_implementation);
-    //randombytes_stir();
+    randombytes_set_implementation(&randombytes_salsa20_implementation);
+    randombytes_stir();
     return 0;
 }
 

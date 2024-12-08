@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include "app_debug.h"
 #include "daemon.h"
 #include "simplevpn.h"
@@ -42,17 +43,27 @@ void usage(void)
     PRINTF("    simplevpn\n");
     PRINTF("\n");
     PRINTF(
-        "       -l <local_addr>            Your local address.\n");
+        "       -l <local_addr>            Your local udp address.\n");
     PRINTF(
-        "       -p <remote_addr>           Your remote server address.\n");
+        "       -r <remote_addr>           Your remote server udp address.\n");
+    PRINTF(
+        "       -L <local_addr>            Your local tcp address.\n");
+    PRINTF(
+        "       -R <remote_addr>           Your remote server tcp address.\n");
     PRINTF(
         "       [-t]                       Create tap device.\n");
     PRINTF(
         "       -k <password>              Password of your remote server.\n");
     PRINTF(
+        "       -n <local_network>         Local network.\n");
+    PRINTF(
+        "       -g <default_network>       Default network.\n");
+    PRINTF(
+        "       -p <prefix>                Your network prefixs address.\n");
+    PRINTF(
         "       -d <cmd>                   Daemon start/stop/restart\n");
     PRINTF(
-        "       -e <log level>           0:never    1:fatal   2:error   3:warn\n");
+        "       -e <log level>             0:never    1:fatal   2:error   3:warn\n");
     PRINTF(
         "                                  4:info (default)     5:debug   6:trace\n");
     PRINTF("\n");
@@ -69,23 +80,30 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
 
     memset(args, 0, sizeof(struct switch_args_t));
     args->password = DEFAULT_PASSWORD;
-    args->if_bind = 0;
+    args->if_local_network = 0;
+    args->if_default_network = 0;
     args->mtu = 1360;
     args->pid_file = "/var/run/simplevpn.pid";
     args->log_file = "/var/run/simplevpn.log";
 
-    while((ch = getopt(argc, argv, "l:r:k:e:d:tvh")) != -1) {
+    while((ch = getopt(argc, argv, "l:r:L:R:p:n:g:k:e:d:tvh")) != -1) {
         switch(ch) {
+        case 'L':
+            args->local_addr[args->local_count].if_tcp = 1;
         case 'l':
-            if (sscanf(optarg, "[%[^]]]:%s", args->local_addr.host, args->local_addr.port) == 2) {
-                args->if_bind = 1;
+            if (sscanf(optarg, "[%[^]]]:%s", args->local_addr[args->local_count].host,
+             args->local_addr[args->local_count].port) == 2) {
+                args->local_count++;
                 args->ipv6 = 1;
-            } else if (sscanf(optarg, "%[^:]:%s", args->local_addr.host, args->local_addr.port) == 2) {
-                args->if_bind = 1;
+            } else if (sscanf(optarg, "%[^:]:%s", args->local_addr[args->local_count].host,
+             args->local_addr[args->local_count].port) == 2) {
+                args->local_count++;
             } else {
                 APP_ERROR("failed to parse local address\n");
             }
             break;
+        case 'R':
+            args->server_addr[args->server_count].if_tcp = 1;
         case 'r':
             if (sscanf(optarg, "[%[^]]]:%s", args->server_addr[args->server_count].host,
              args->server_addr[args->server_count].port) == 2) {
@@ -96,6 +114,28 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
                 args->server_count++;
             } else {
                 APP_ERROR("failed to parse remote address\n");
+            }
+            break;
+        case 'p':
+            if (sscanf(optarg, "%[^/]/%u", args->prefixs[args->prefix_count].prefix,
+             &args->prefixs[args->prefix_count].len) == 2) {
+                args->prefix_count++;
+            } else {
+                APP_ERROR("failed to parse prefix address\n");
+            }
+            break;
+        case 'n':
+            if (sscanf(optarg, "%[^:]", args->local_network) == 1) {
+                args->if_local_network++;
+            } else {
+                APP_ERROR("failed to parse local network address\n");
+            }
+            break;
+        case 'g':
+            if (sscanf(optarg, "%[^:]", args->default_network) == 1)  {
+                args->if_default_network++;
+            } else {
+                APP_ERROR("failed to parse default network address\n");
             }
             break;
         case 'k':
@@ -123,6 +163,7 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
                 usage();
                 exit(-1);
             }
+            log_level = log_warn;
             break;
         case 'v':
         case 'h':
@@ -142,11 +183,15 @@ int main(int argc, char **argv)
 {
     struct switch_args_t args;
 
+    APP_INFO("%s build: %s, %s\n", argv[0], __DATE__, __TIME__);
+
+    signal(SIGPIPE, SIG_IGN);
+
     if (args_parse(&args, argc, argv) < 0) {
         exit(-1);
     }
 
-    if (!args.if_bind && !args.has_tap && !args.server_count) {
+    if (!args.local_count && !args.has_tap && !args.server_count) {
         usage();
         exit(0);
     }
@@ -174,11 +219,20 @@ int main(int argc, char **argv)
         }
     }
 
-    if (args.if_bind) {
-        APP_INFO("bind address: %s:%s\n", args.local_addr.host, args.local_addr.port);
+    for (int i = 0; i < args.local_count; i++) {
+        APP_INFO("bind: %s://%s:%s\n", args.local_addr[i].if_tcp?"tcp":"udp", args.local_addr[i].host, args.local_addr[i].port);
     }
     for (int i = 0; i < args.server_count; i++) {
-        APP_INFO("server address: %s:%s\n", args.server_addr[i].host, args.server_addr[i].port);
+        APP_INFO("remote: %s://%s:%s\n", args.server_addr[i].if_tcp?"tcp":"udp", args.server_addr[i].host, args.server_addr[i].port);
+    }
+    if (args.if_local_network) {
+        APP_INFO("local device address: %s\n", args.local_network);
+    }
+    for (int i = 0; i < args.prefix_count; i++) {
+        APP_INFO("export prefix: %s/%u\n", args.prefixs[i].prefix, args.prefixs[i].len);
+    }
+    if (args.if_default_network) {
+        APP_INFO("default gateway: %s\n", args.default_network);
     }
 #ifdef USE_CRYPTO
     if (strcmp(args.password, DEFAULT_PASSWORD) == 0) {
@@ -187,7 +241,6 @@ int main(int argc, char **argv)
 #else
     APP_WARN("no encryption support\n");
 #endif
-
 
     APP_INFO("switch running...\n");
     return switch_run(&args);
