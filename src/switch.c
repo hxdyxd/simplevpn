@@ -993,6 +993,9 @@ int switch_send_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct ca
 
     new_len = sizeof(struct iphdr) + RIP_HEADER_LEN + new_rip->len;
 
+    //Big Endian
+    new_rip->len = htons(new_rip->len);
+
     if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
         dlen = switch_read_encode(buff2, buff1, new_len, ppam);
         if(dlen < 0) {
@@ -1041,6 +1044,8 @@ int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct
         new_iph->protocol = 0xff;
         new_iph->check = switch_in_cksum((uint16_t *)new_iph, iph->ihl * 4);
 
+        //Little Endian
+        rip->len = ntohs(rip->len);
         APP_DEBUG("[heart] new req info 0x%08x %u\n", ntohl(rip->router_mac), rip->len);
         ctx->src_pctx->router_mac = ntohl(rip->router_mac);
         struct cache_router_t rt, src_rt;
@@ -1067,7 +1072,12 @@ int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct
 
         new_len = sizeof(struct iphdr) + RIP_HEADER_LEN + new_rip->len;
 
+        //Big Endian
+        new_rip->len = htons(new_rip->len);
+
     } else if (RIP_TYPE_REP == rip->type) {
+        //Little Endian
+        rip->len = ntohs(rip->len);
         APP_DEBUG("[heart] new resp info 0x%08x %u\n", ntohl(rip->router_mac), rip->len);
         ctx->src_pctx->router_mac = ntohl(rip->router_mac);
         struct cache_router_t rt;
