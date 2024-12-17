@@ -26,6 +26,7 @@
 #include <sys/socket.h>
 #include <net/if.h>
 #include "list.h"
+#include "uthash.h"
 
 #define DEFAULT_PASSWORD      ""
 #define MODE_SWITCH      0
@@ -98,8 +99,32 @@ struct switch_ctx_t {
     };
 };
 
+struct cache_router_t {
+    uint32_t router_mac;
+    uint32_t dest_router;
+    uint32_t next_hop_router;
+    uint32_t time;
+    uint8_t prefix_length;
+    uint8_t metric;
+    uint32_t tx_bytes;
+    uint32_t rx_bytes;
+    uint32_t tx_pks;
+    uint32_t rx_pks;
+    uint32_t rtt_time;
+    uint32_t rtt_send_time;
+    uint32_t gc_time;
+    uint32_t gc_enable;
+    uint8_t alloced_ctx;
+    int (*add_router)(struct cache_router_t *, int);
+    void *router_data;
+    struct switch_ctx_t *ctx;
+    UT_hash_handle hh;
+    struct cache_router_t **table;
+};
+
 struct switch_main_t {
-    struct switch_ctx_t head;
+    struct switch_ctx_t   head;
+    struct cache_router_t param;
 };
 
 struct switch_args_t {
@@ -127,7 +152,7 @@ struct switch_args_t {
 
 int switch_run(struct switch_args_t *args);
 int switch_reconnect_tcp(struct switch_ctx_t *ctx);
-struct switch_ctx_t *switch_add_accepted_tcp(struct switch_ctx_t *ctx);
+struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct switch_ctx_t *ctx);
 struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, const char *host, const char *port);
 struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, const char *host, const char *port);
 struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16_t mtu);

@@ -19,8 +19,7 @@
  * along with simplevpn; see the file COPYING. If not, see
  * <http://www.gnu.org/licenses/>.
  */
-
-#include "simplevpn.h"
+#include <netinet/in.h>
 #include <linux/if_tun.h>
 #include <linux/ip.h>
 #include <linux/icmp.h>
@@ -34,13 +33,13 @@
 #include <sys/select.h> 
 #include <sys/ioctl.h>
 #include <netdb.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 
 #include <sys/time.h>
 #include "app_debug.h"
 #include "netclock.h"
+#include "simplevpn.h"
 #include "cache_table.h"
 #include "udp_alloc.h"
 #ifdef USE_CRYPTO
@@ -92,7 +91,7 @@ struct switch_rip_t {
     struct switch_rip_item_t info[RIP_ITEM_MAX];
 };
 
-int switch_read_encode(uint8_t *out, uint8_t *in, int rlen, struct cache_router_t *ppam);
+int switch_read_encode(uint8_t *out, uint8_t *in, int rlen);
 static uint16_t switch_in_cksum(const uint16_t *buf, int bufsz);
 
 void msg_dump(void *buf, int len)
@@ -265,7 +264,7 @@ static int send_icmp_packet(UDP_CTX *ctx, struct cache_router_t *ppam, uint8_t t
     icmph->checksum = switch_in_cksum((uint16_t *)icmph, ctx->plen + sizeof(struct icmphdr)); //-O3 Abnormal
 
     if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(ctx->cbuf, (void *)iph, ip_len, ppam);
+        dlen = switch_read_encode(ctx->cbuf, (void *)iph, ip_len);
         if(dlen < 0) {
             APP_WARN("encode error\n");
             return dlen;
@@ -377,7 +376,7 @@ int switch_reconnect_tcp(struct switch_ctx_t *ctx)
         return -1;
     }
 
-    APP_DEBUG("reconnect tcp %s:%s\n", ctx->tcp.local_addr.host, ctx->tcp.local_addr.port);
+    APP_INFO("reconnect tcp %s:%s\n", ctx->tcp.local_addr.host, ctx->tcp.local_addr.port);
 
     sock = vpn_tcp_alloc(0, ctx->tcp.local_addr.host, ctx->tcp.local_addr.port, &ctx->tcp.addr, &sin_size);
     if (sock < 0) {
@@ -444,10 +443,14 @@ struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, cons
     return psctx;
 }
 
-struct switch_ctx_t *switch_add_accepted_tcp(struct switch_ctx_t *ctx)
+struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct switch_ctx_t *ctx)
 {
+    int r;
     int sock;
     socklen_t sin_size = sizeof(struct sockaddr_storage);
+    char addr_buf[INET6_ADDRSTRLEN];
+    char *ip = "";
+    uint16_t port = 0;
 
     if (!ctx->tcp.if_bind || !ctx->tcp.if_local) {
         APP_ERROR("Failed to accept tcp\n");
@@ -466,7 +469,14 @@ struct switch_ctx_t *switch_add_accepted_tcp(struct switch_ctx_t *ctx)
         return NULL;
     }
 
-    APP_DEBUG("accept tcp %d\n", sock);
+    r = vpn_sock_setblocking(sock, 0);
+    if (r < 0) {
+        APP_ERROR("sock_setblocking(fd = %d)\n", sock);
+        return NULL;
+    }
+
+    vpn_udp_ntop(&psctx->tcp.addr, addr_buf, sizeof(addr_buf), &ip, &port);
+    APP_INFO("accept tcp %d from %s:%u\n", sock, ip, port);
     psctx->type = SWITCH_TCP;
     psctx->tcp.sock = sock;
     psctx->tcp.if_bind = 1;
@@ -479,7 +489,7 @@ struct switch_ctx_t *switch_add_accepted_tcp(struct switch_ctx_t *ctx)
     psctx->tcp.read_buffer_size = 0;
     psctx->tcp.read_pos = 0;
     psctx->tcp.read_size = 0;
-    list_add(&psctx->list, &ctx->list);
+    list_add(&psctx->list, &smb->head.list);
     return psctx;
 }
 
@@ -632,7 +642,7 @@ int switch_get_type(struct switch_ctx_t *psctx)
     return psctx->type;
 }
 
-int switch_read(struct switch_ctx_t *psctx, void *buff, int len, struct cache_router_t *ppam)
+int switch_read(struct switch_ctx_t *psctx, void *buff, int len, struct switch_main_t *psmb)
 {
     int rlen = -1;
 
@@ -663,7 +673,7 @@ int switch_read(struct switch_ctx_t *psctx, void *buff, int len, struct cache_ro
         }
     } else if (SWITCH_TCP == psctx->type) {
         if (psctx->tcp.if_bind && psctx->tcp.if_local) {
-            switch_add_accepted_tcp(psctx);
+            switch_add_accepted_tcp(psmb, psctx);
             return 0;
         } else {
             
@@ -727,7 +737,7 @@ fail_reconnect:
                 if (psctx->tcp.if_bind && !psctx->tcp.if_local) {
 
                     struct cache_router_t *s, *tmp;
-                    cache_router_iter(ppam,s,tmp) {
+                    cache_router_iter(&(psmb->param),s,tmp) {
                         if (s->ctx == psctx) {
                             s->ctx = NULL;
                             APP_DEBUG("del accepted ctx\n");
@@ -777,7 +787,7 @@ fail_reconnect:
     return rlen;
 }
 
-int switch_read_decode(uint8_t *out, uint8_t *in, int rlen, struct cache_router_t *ppam)
+int switch_read_decode(uint8_t *out, uint8_t *in, int rlen)
 {
     int dlen = -1;
     struct switch_pack_t *head = (struct switch_pack_t *)in;
@@ -801,7 +811,9 @@ int switch_read_decode(uint8_t *out, uint8_t *in, int rlen, struct cache_router_
     struct iphdr *iph = (struct iphdr *)out;
     if (4 == iph->version) {
         if (head->hop_limit < iph->ttl) {
-            iph->check += iph->ttl - head->hop_limit;
+            uint32_t check = iph->check;
+            check += htons((iph->ttl - head->hop_limit) << 8);
+            iph->check = (uint16_t)(check + (check >= 0xFFFF));
             iph->ttl = head->hop_limit;
         }
         if (!iph->ttl) {
@@ -815,7 +827,7 @@ int switch_read_decode(uint8_t *out, uint8_t *in, int rlen, struct cache_router_
     return dlen;
 }
 
-int switch_read_encode(uint8_t *out, uint8_t *in, int rlen, struct cache_router_t *ppam)
+int switch_read_encode(uint8_t *out, uint8_t *in, int rlen)
 {
     int dlen = -1;
 
@@ -843,16 +855,16 @@ int switch_read_encode(uint8_t *out, uint8_t *in, int rlen, struct cache_router_
     return dlen + sizeof(struct switch_pack_t);
 }
 
-int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct cache_router_t *ppam)
+int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct switch_main_t *psmb)
 {
     int dlen = -1;
-    int rlen = switch_read(ctx->src_pctx, buff1, len, ppam);
+    int rlen = switch_read(ctx->src_pctx, buff1, len, psmb);
     if (rlen <= 0) {
         return rlen;
     }
 
     if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
-        dlen = switch_read_decode(buff2, buff1, rlen, ppam);
+        dlen = switch_read_decode(buff2, buff1, rlen);
         if(dlen < 0) {
             return dlen;
         }
@@ -861,7 +873,7 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct cac
         ctx->plen = dlen;
         ctx->clen = rlen;
     } else if (SWITCH_TAP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(buff2, buff1, rlen, ppam);
+        dlen = switch_read_encode(buff2, buff1, rlen);
         if(dlen < 0) {
             return dlen;
         }
@@ -997,7 +1009,7 @@ int switch_send_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct ca
     new_rip->len = htons(new_rip->len);
 
     if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(buff2, buff1, new_len, ppam);
+        dlen = switch_read_encode(buff2, buff1, new_len);
         if(dlen < 0) {
             APP_WARN("[heart] encode error\n");
             return dlen;
@@ -1101,7 +1113,7 @@ int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct
     }
 
     if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(in_buff, new_buff, new_len, ppam);
+        dlen = switch_read_encode(in_buff, new_buff, new_len);
         if(dlen < 0) {
             APP_WARN("[heart] encode error\n");
             return dlen;
@@ -1128,13 +1140,12 @@ int switch_run(struct switch_args_t *args)
     int sctx_count = 0;
     int ret = -1;
     struct cache_router_t *router_all = NULL;
-    struct cache_router_t param;
     uint32_t default_mac = 0;
     struct switch_main_t smb;
     struct switch_ctx_t *sctx, *stmp;
 
     INIT_LIST_HEAD(&smb.head.list);
-    memset(&param, 0, sizeof(struct cache_router_t));
+    memset(&smb.param, 0, sizeof(struct cache_router_t));
 
     if (args->running) {
         APP_WARN("vpn is running\n");
@@ -1176,26 +1187,26 @@ int switch_run(struct switch_args_t *args)
             APP_ERROR("inet_aton error\n");
             goto exit;
         }
-        param.router_mac = ntohl(ipaddr.s_addr);
+        smb.param.router_mac = ntohl(ipaddr.s_addr);
     } else {
 #ifdef USE_CRYPTO
-        crypto_gen_rand((void *)&param.router_mac, sizeof(param.router_mac));
+        crypto_gen_rand((void *)&smb.param.router_mac, sizeof(smb.param.router_mac));
 #else
-        param.router_mac = rand();
+        smb.param.router_mac = rand();
 #endif
-        param.router_mac &= ~(0xff << 24);
-        param.router_mac |= (0xa << 24);
+        smb.param.router_mac &= ~(0xff << 24);
+        smb.param.router_mac |= (0xa << 24);
     }
-    param.dest_router = param.router_mac;
-    param.prefix_length = 32;
-    param.next_hop_router = param.router_mac;
-    param.metric = 0;
-    param.time = 0;
-    param.ctx = NULL;
-    param.table = &router_all;
-    cache_router_add(&param);
+    smb.param.dest_router = smb.param.router_mac;
+    smb.param.prefix_length = 32;
+    smb.param.next_hop_router = smb.param.router_mac;
+    smb.param.metric = 0;
+    smb.param.time = 0;
+    smb.param.ctx = NULL;
+    smb.param.table = &router_all;
+    cache_router_add(&smb.param);
 
-    APP_DEBUG("router_mac = 0x%08x\n", param.router_mac);
+    APP_DEBUG("router_mac = 0x%08x\n", smb.param.router_mac);
     APP_DEBUG("header = %d\n", sizeof(struct switch_pack_t));
 
     for (int i = 0; i < args->local_count; i++) {
@@ -1241,12 +1252,12 @@ int switch_run(struct switch_args_t *args)
                 goto exit;
             }
 
-            param.add_router = switch_add_router;
+            smb.param.add_router = switch_add_router;
         }
 
-        param.router_data = rctx;
-        param.ctx = rctx;
-        cache_router_add(&param);
+        smb.param.router_data = rctx;
+        smb.param.ctx = rctx;
+        cache_router_add(&smb.param);
         sctx_count++;
     }
 
@@ -1257,9 +1268,9 @@ int switch_run(struct switch_args_t *args)
             APP_ERROR("inet_aton error\n");
             continue;
         }
-        param.dest_router = ntohl(ipaddr.s_addr);
-        param.prefix_length = args->prefixs[i].len;
-        cache_router_add(&param);
+        smb.param.dest_router = ntohl(ipaddr.s_addr);
+        smb.param.prefix_length = args->prefixs[i].len;
+        cache_router_add(&smb.param);
     }
 
     APP_INFO("vpn started\n");
@@ -1295,7 +1306,7 @@ int switch_run(struct switch_args_t *args)
         }
 
         cache_time = get_time_ms();
-        param.time = cache_time;
+        smb.param.time = cache_time;
 
         list_for_each_entry_safe(sctx, stmp, &smb.head.list, list) {
             int cur_fd = switch_get_fd(sctx);
@@ -1307,7 +1318,7 @@ int switch_run(struct switch_args_t *args)
                 UDP_CTX ctx;
                 ctx.src_pctx = sctx;
 
-                int rlen = switch_read_both(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &param);
+                int rlen = switch_read_both(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &smb);
                 if (rlen <= 0) {
                     continue;
                 }
@@ -1334,7 +1345,7 @@ int switch_run(struct switch_args_t *args)
                 }
 
                 if (daddr == 0xffffffff) {
-                    switch_process_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &param);
+                    switch_process_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &smb.param);
                     continue;
                 }
 
@@ -1342,7 +1353,7 @@ int switch_run(struct switch_args_t *args)
                 ctx.saddr = saddr;
                 ctx.daddr = daddr;
                 ctx.default_addr = default_mac;
-                send_to_router(&ctx, &param);
+                send_to_router(&ctx, &smb.param);
             }
         }
 
@@ -1361,7 +1372,7 @@ int switch_run(struct switch_args_t *args)
 
                 struct cache_router_t *rt = NULL;
                 struct cache_router_t *s, *tmp;
-                cache_router_iter(&param,s,tmp) {
+                cache_router_iter(&smb.param,s,tmp) {
                     if (!s->ctx)
                         continue;
                     if (SWITCH_TAP == s->ctx->type)
@@ -1385,14 +1396,14 @@ int switch_run(struct switch_args_t *args)
                     APP_DEBUG("[heart] send probe heart\n");
                 }
 
-                switch_send_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &param);
+                switch_send_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &smb.param);
             }
         }
 
         if (cache_time - last_route_time > CACHE_ROUTE_UPDATE_TIME) {
             last_route_time = cache_time;
-            APP_INFO("active count: router = %d, sock = %d\n", cache_router_count(&param), sock_count);
-            cache_route_printall(&param);
+            APP_INFO("active count: router = %d, sock = %d\n", cache_router_count(&smb.param), sock_count);
+            cache_route_printall(&smb.param);
         }
     }
 exit:
@@ -1407,7 +1418,7 @@ exit:
         }
         close(cur_fd);
     }
-    cache_router_delete_all(&param);
+    cache_router_delete_all(&smb.param);
 
     args->running = 0;
     return 0;

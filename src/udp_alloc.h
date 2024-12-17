@@ -35,5 +35,6 @@ int vpn_get_sockaddr(const char *host, const char *port,
                   struct sockaddr_storage *addr, socklen_t* addrlen);
 int vpn_udp_ntop(struct sockaddr_storage *src_addr, char *addr_buf, int len, char **host, uint16_t *port);
 int vpn_udp_sinsize(struct sockaddr_storage *src_addr);
+int vpn_sock_setblocking(int sock, int if_block);
 
 #endif

@@ -136,7 +136,7 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port,
 
         r = listen(sock, 512);
         if (r < 0) {
-            APP_ERROR("listen(fd = %d, %s:%d): %s\n", sock, host, port, strerror(errno));
+            APP_ERROR("listen(fd = %d, %s:%s): %s\n", sock, host, port, strerror(errno));
             close(sock);
             freeaddrinfo(res);
             return -1;
@@ -221,5 +221,28 @@ int vpn_udp_ntop(struct sockaddr_storage *src_addr, char *addr_buf, int len, con
         return -1;
     }
 
+    return 0;
+}
+
+int vpn_sock_setblocking(int sock, int if_block)
+{
+    int flags, r;
+
+    flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0) {
+        APP_ERROR("fcntl: %s\n", strerror(errno));
+        return -1;
+    }
+
+    if (if_block)
+        flags &= ~O_NONBLOCK;
+    else
+        flags |= O_NONBLOCK;
+
+    r = fcntl(sock, F_SETFL, flags);
+    if (r < 0) {
+        APP_ERROR("fcntl: %s\n", strerror(errno));
+        return -1;
+    }
     return 0;
 }

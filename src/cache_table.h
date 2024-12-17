@@ -25,7 +25,6 @@
 
 #include <stdint.h>
 #include <netinet/in.h>
-#include "uthash.h"
 #include "simplevpn.h"
 
 #define CACHE_TIME_OUT           (600 * 1000)
@@ -34,29 +33,6 @@
 #define CACHE_ROUTE_METRIC_MAX   (16)
 #define CACHE_ROUTE_UPDATE_TIME  (10 * 1000)
 #define HWADDR_LEN            (6)
-
-struct cache_router_t {
-    uint32_t router_mac;
-    uint32_t dest_router;
-    uint32_t next_hop_router;
-    uint32_t time;
-    uint8_t prefix_length;
-    uint8_t metric;
-    uint32_t tx_bytes;
-    uint32_t rx_bytes;
-    uint32_t tx_pks;
-    uint32_t rx_pks;
-    uint32_t rtt_time;
-    uint32_t rtt_send_time;
-    uint32_t gc_time;
-    uint32_t gc_enable;
-    uint8_t alloced_ctx;
-    int (*add_router)(struct cache_router_t *, int);
-    void *router_data;
-    struct switch_ctx_t *ctx;
-    UT_hash_handle hh;
-    struct cache_router_t **table;
-};
 
 #define cache_router_iter(rt,s,tmp) HASH_ITER(hh, *(rt)->table, s, tmp)
 
