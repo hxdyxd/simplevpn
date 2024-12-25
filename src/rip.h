@@ -1,5 +1,5 @@
 /*
- * netclock.h  - Provide simplevpn switch service
+ * rip.h - Provide simplevpn switch service
  *
  * Copyright (C) 2018, hxdyxd <hxdyxd@gmail.com>
  *
@@ -19,41 +19,17 @@
  * along with simplevpn; see the file COPYING. If not, see
  * <http://www.gnu.org/licenses/>.
  */
-#ifndef _NETCLOCK_H_
-#define _NETCLOCK_H_
 
-#include <time.h>
+#ifndef _RIP_H_
+#define _RIP_H_
+
 #include <stdint.h>
-#include <sys/time.h>
+#include <netinet/in.h>
+#include "simplevpn.h"
 
-static inline uint32_t get_time_ms(void)
-{
-    int r;
-
-#ifdef NO_CLOCK_MONOTONIC
-    struct timeval tv;
-
-    r = gettimeofday(&tv, NULL);
-    if (r < 0) {
-        ERROR_PRINTF("gettimeofday() %s\n", strerror(errno));
-        return 0;
-    }
-    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-#else
-    struct timespec tv;
-
-    r = clock_gettime(
-#ifdef CLOCK_MONOTONIC_RAW
-        CLOCK_MONOTONIC_RAW,
-#else
-        CLOCK_MONOTONIC,
-#endif
-        &tv);
-    if (r < 0) {
-        return 0;
-    }
-    return tv.tv_sec * 1000 + tv.tv_nsec / 1000 / 1000;
-#endif
-}
+//rip
+void send_to_self(UDP_CTX *ctx_p);
+int switch_send_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct cache_router_t *ppam);
+int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct cache_router_t *ppam);
 
 #endif

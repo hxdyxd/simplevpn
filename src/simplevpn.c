@@ -119,6 +119,9 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
         case 'p':
             if (sscanf(optarg, "%[^/]/%u", args->prefixs[args->prefix_count].prefix,
              &args->prefixs[args->prefix_count].len) == 2) {
+                if (args->prefixs[args->prefix_count].len > 32) {
+                    args->prefixs[args->prefix_count].len = 32;
+                }
                 args->prefix_count++;
             } else {
                 APP_ERROR("failed to parse prefix address\n");

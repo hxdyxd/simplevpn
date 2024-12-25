@@ -20,6 +20,7 @@
  * <http://www.gnu.org/licenses/>.
  */
 #include <netinet/in.h>
+#include <net/if.h>
 #include <linux/if_tun.h>
 #include <linux/ip.h>
 #include <linux/icmp.h>
@@ -42,6 +43,7 @@
 #include "simplevpn.h"
 #include "cache_table.h"
 #include "udp_alloc.h"
+#include "rip.h"
 #ifdef USE_CRYPTO
 #include "crypto.h"
 #endif
@@ -52,72 +54,11 @@
 
 #define BUF_SIZE                   2000
 
-typedef struct {
-    void *cbuf;
-    void *pbuf;
-    int clen;
-    int plen;
-    char type;
-    uint32_t saddr;
-    uint32_t daddr;
-    uint32_t default_addr;
-    struct switch_ctx_t *src_pctx;
-} UDP_CTX;
-
 struct switch_pack_t {
     uint8_t hop_limit;
     uint8_t recv[3];
 };
 
-
-#define RIP_ITEM_MAX    25
-#define RIP_HEADER_LEN  8
-#define RIP_TYPE_REQ    1
-#define RIP_TYPE_REP    2
-
-struct switch_rip_item_t {
-    uint32_t next_hop_router;
-    uint32_t dest_router;
-    uint8_t prefix_length;
-    uint8_t metric;
-    uint8_t recv[2];
-};
-
-struct switch_rip_t {
-    uint8_t type;
-    uint8_t ver;
-    uint16_t len;
-    uint32_t router_mac;
-    struct switch_rip_item_t info[RIP_ITEM_MAX];
-};
-
-int switch_read_encode(uint8_t *out, uint8_t *in, int rlen);
-static uint16_t switch_in_cksum(const uint16_t *buf, int bufsz);
-
-void msg_dump(void *buf, int len)
-{
-    int i, j;
-    unsigned char *ch = buf;
-    for (i = 0; i < len; i = j) {
-        for (j = i; j < i + 16; j++) {
-            if (j < len) {
-                PRINTF("%02x ", ch[j]);
-            } else {
-                PRINTF("   ");
-            }
-        }
-        PRINTF("  ");
-        for (j = i; j < len && j < i + 16; j++) {
-            if ('0' <= ch[j] && ch[j] <= 'z') {
-                PRINTF("%c", ch[j]);
-            } else {
-                PRINTF(".");
-            }
-        }
-
-        PRINTF("\n");
-    }
-}
 
 static int switch_write(struct switch_ctx_t *psctx, UDP_CTX *ctx_p)
 {
@@ -205,7 +146,7 @@ static int switch_write(struct switch_ctx_t *psctx, UDP_CTX *ctx_p)
     return wlen;
 }
 
-static void send_to_self(UDP_CTX *ctx_p)
+void send_to_self(UDP_CTX *ctx_p)
 {
     if (DEBUG_INFO) {
         switch_dump_send_router(ctx_p->src_pctx, NULL, "[self]");
@@ -316,26 +257,6 @@ static void send_to_router(UDP_CTX *ctx_p, struct cache_router_t *ppam)
     send_to_target_router(&src_rt, target, ctx_p);
 }
 
-// Interent checksum
-static uint16_t switch_in_cksum(const uint16_t *buf, int bufsz)
-{
-    uint32_t sum = 0;
-
-    while (bufsz > 1)
-    {
-        sum += *buf;
-        buf++;
-        bufsz -= 2;
-    }
-
-    if (bufsz == 1)
-        sum += *(uint8_t *)buf;
-
-    sum = (sum >> 16) + (sum & 0xffff);
-    sum += sum >> 16;
-    return ~sum;
-}
-
 struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, const char *host, const char *port)
 {
     int sock;
@@ -346,6 +267,7 @@ struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, cons
         APP_ERROR("Failed to alloc memory\n");
         return NULL;
     }
+    memset(psctx, 0, sizeof(struct switch_ctx_t));
 
     APP_DEBUG("add udp %s:%s\n", host, port);
     if (if_bind) {
@@ -366,6 +288,26 @@ struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, cons
     return psctx;
 }
 
+int switch_disconnect_tcp(struct switch_ctx_t *ctx)
+{
+    if (SWITCH_TCP != ctx->type) {
+        APP_ERROR("Failed to disconnect tcp\n");
+        return -1;
+    }
+
+    APP_WARN("tcp connect disconnect %d\n", ctx->tcp.sock);
+    if (ctx->tcp.write_buffer)
+        free(ctx->tcp.write_buffer);
+    if (ctx->tcp.read_buffer)
+        free(ctx->tcp.read_buffer);
+    if (ctx->tcp.sock >= 0)
+        close(ctx->tcp.sock);
+    ctx->tcp.write_buffer = NULL;
+    ctx->tcp.read_buffer = NULL;
+    ctx->tcp.sock = -1;
+    return 0;
+}
+
 int switch_reconnect_tcp(struct switch_ctx_t *ctx)
 {
     int sock;
@@ -376,13 +318,19 @@ int switch_reconnect_tcp(struct switch_ctx_t *ctx)
         return -1;
     }
 
-    APP_INFO("reconnect tcp %s:%s\n", ctx->tcp.local_addr.host, ctx->tcp.local_addr.port);
+    if (ctx->tcp.sock >= 0) {
+        switch_disconnect_tcp(ctx);
+    }
+
+    APP_INFO("tcp reconnect %s:%s\n", ctx->tcp.local_addr.host, ctx->tcp.local_addr.port);
 
     sock = vpn_tcp_alloc(0, ctx->tcp.local_addr.host, ctx->tcp.local_addr.port, &ctx->tcp.addr, &sin_size);
     if (sock < 0) {
         APP_ERROR("Failed to create tcp socket\n");
         return sock;
     }
+
+    APP_INFO("tcp reconnect success %s:%s\n", ctx->tcp.local_addr.host, ctx->tcp.local_addr.port);
 
     if (ctx->tcp.write_buffer)
         free(ctx->tcp.write_buffer);
@@ -412,16 +360,18 @@ struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, cons
         APP_ERROR("Failed to alloc memory\n");
         return NULL;
     }
+    memset(psctx, 0, sizeof(struct switch_ctx_t));
 
     APP_DEBUG("add tcp %s:%s\n", host, port);
     if (if_bind) {
         sock = vpn_tcp_alloc(if_bind, host, port, &psctx->tcp.localaddr, &sin_size);
+        if (sock < 0) {
+            APP_ERROR("Failed to create tcp socket\n");
+            return NULL;
+        }
     } else {
-        sock = vpn_tcp_alloc(if_bind, host, port, &psctx->tcp.addr, &sin_size);
-    }
-    if (sock < 0) {
-        APP_ERROR("Failed to create tcp socket\n");
-        return NULL;
+        //sock = vpn_tcp_alloc(if_bind, host, port, &psctx->tcp.addr, &sin_size);
+        sock = -1;
     }
 
     psctx->type = SWITCH_TCP;
@@ -462,6 +412,7 @@ struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct s
         APP_ERROR("Failed to alloc memory\n");
         return NULL;
     }
+    memset(psctx, 0, sizeof(struct switch_ctx_t));
 
     sock  = accept(ctx->tcp.sock, (struct sockaddr *)&psctx->tcp.addr, &sin_size);
     if (sock < 0) {
@@ -504,6 +455,7 @@ struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16
         APP_ERROR("Failed to alloc memory\n");
         return NULL;
     }
+    memset(psctx, 0, sizeof(struct switch_ctx_t));
 
     if ((fd = open(clonedev, O_RDWR)) < 0) {
         free(psctx);
@@ -723,17 +675,7 @@ int switch_read(struct switch_ctx_t *psctx, void *buff, int len, struct switch_m
 
 fail_reconnect:
             if (rlen == 0) {
-                APP_WARN("connect disconnect %d\n", psctx->tcp.sock);
-                if (psctx->tcp.write_buffer)
-                    free(psctx->tcp.write_buffer);
-                if (psctx->tcp.read_buffer)
-                    free(psctx->tcp.read_buffer);
-                if (psctx->tcp.sock >= 0)
-                    close(psctx->tcp.sock);
-                psctx->tcp.write_buffer = NULL;
-                psctx->tcp.read_buffer = NULL;
-                psctx->tcp.sock = -1;
-
+                switch_disconnect_tcp(psctx);
                 if (psctx->tcp.if_bind && !psctx->tcp.if_local) {
 
                     struct cache_router_t *s, *tmp;
@@ -785,6 +727,16 @@ fail_reconnect:
         return -1;
     }
     return rlen;
+}
+
+int switch_address_cmp(struct switch_ctx_t *ctxa, struct switch_ctx_t *ctxb)
+{
+    if (SWITCH_UDP == ctxa->type && SWITCH_UDP == ctxb->type)
+        return memcmp(&ctxa->udp.addr, &ctxb->udp.addr, sizeof(struct sockaddr_storage));
+    if (SWITCH_TCP == ctxa->type && SWITCH_TCP == ctxb->type)
+        return memcmp(&ctxa->tcp.addr, &ctxb->tcp.addr, sizeof(struct sockaddr_storage));
+
+    return -1;
 }
 
 int switch_read_decode(uint8_t *out, uint8_t *in, int rlen)
@@ -888,246 +840,47 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
     return ctx->plen;
 }
 
-void switch_rip_add_item(const struct cache_router_t *src_rt, struct cache_router_t *rt, void *p)
+int switch_send_heart_timer(struct switch_main_t *psmb, void *in, void *out, int len)
 {
-    uint8_t rip_sum = 0;
-    struct switch_rip_t *rip = (struct switch_rip_t *)p;
-    if (!rip) {
-        return;
-    }
+    struct switch_ctx_t *sctx, *stmp;
+    uint32_t cache_time = get_time_ms();
 
-    rip_sum = rip->len / sizeof(struct switch_rip_item_t);
-    if (rip_sum >= RIP_ITEM_MAX) {
-        APP_WARN("[heart] rip_sum too large %u\n", rip_sum);
-        return;
-    }
-
-    /* 排除请求者自己 */
-    if (src_rt->dest_router == rt->dest_router)
-        return;
-
-    /* 排除下一跳是自己 */
-    if (src_rt->dest_router == rt->next_hop_router)
-        return;
-
-    rt->rtt_send_time = get_time_ms();
-    rip->info[rip_sum].next_hop_router = htonl(rt->next_hop_router);
-    rip->info[rip_sum].prefix_length = rt->prefix_length;
-    rip->info[rip_sum].dest_router = htonl(rt->dest_router);
-    rip->info[rip_sum].metric = rt->metric;
-    rip->len += sizeof(struct switch_rip_item_t);
-    APP_DEBUG("[heart] send rip_id=%u dest=%08x/%u next=%08x metric=%u -> %08x\n",
-             rip_sum, rt->dest_router, rt->prefix_length, rt->next_hop_router, rt->metric, src_rt->dest_router);
-}
-
-void switch_rip_add_resp_item(struct cache_router_t *rt, struct switch_rip_t *rip)
-{
-    uint8_t rip_id = 0;
-    uint8_t rip_sum = 0;
-    uint32_t src_router = rt->dest_router;
-
-    rip_sum = rip->len / sizeof(struct switch_rip_item_t);
-    if (rip_sum >= RIP_ITEM_MAX) {
-        APP_WARN("[heart] rip_sum too large %u\n", rip_sum);
-        return;
-    }
-
-    for (rip_id = 0; rip_id < rip_sum; rip_id++) {
-        uint32_t dest_router = ntohl(rip->info[rip_id].dest_router);
-        uint8_t prefix_length = rip->info[rip_id].prefix_length;
-        uint32_t next_hop_router = ntohl(rip->router_mac);
-        uint8_t metric = rip->info[rip_id].metric + 1;
-        uint32_t peer_next_hop = ntohl(rip->info[rip_id].next_hop_router);
-
-        if (peer_next_hop == rt->router_mac) {
-            APP_WARN("[heart] S rip_id=%u dest=%08x next=%08x metric=%u <- %08x\n", rip_id, dest_router, next_hop_router, metric, src_router);
+    list_for_each_entry_safe(sctx, stmp, &psmb->head.list, list) {
+        UDP_CTX ctx;
+        ctx.src_pctx = sctx;
+        if (SWITCH_TAP == ctx.src_pctx->type)
             continue;
+        if (SWITCH_UDP == ctx.src_pctx->type && ctx.src_pctx->udp.if_bind)
+            continue;
+        if (SWITCH_TCP == ctx.src_pctx->type && ctx.src_pctx->tcp.if_bind)
+            continue;
+
+        struct cache_router_t *rt = NULL;
+        struct cache_router_t *s, *tmp;
+        cache_router_iter(&psmb->param,s,tmp) {
+            if (!s->ctx)
+                continue;
+            if (!switch_address_cmp(ctx.src_pctx, s->ctx)) {
+                rt = s;
+                break;
+            }
         }
 
-        struct cache_router_t *dest_rt = cache_router_find(rt, dest_router);
-        if (!dest_rt) {
-            rt->dest_router = dest_router;
-            rt->prefix_length = prefix_length;
-            rt->next_hop_router = next_hop_router;
-            rt->metric = metric;
-            cache_router_add(rt);
-            APP_DEBUG("[heart] A rip_id=%u dest=%08x/%u next=%08x metric=%u <- %08x\n",
-                 rip_id, dest_router, prefix_length, next_hop_router, metric, src_router);
-        } else if (src_router == dest_rt->next_hop_router) {
-            rt->dest_router = dest_router;
-            rt->prefix_length = prefix_length;
-            rt->next_hop_router = next_hop_router;
-            rt->metric = metric;
-            cache_router_add(rt);
-            APP_DEBUG("[heart] U rip_id=%u dest=%08x/%u next=%08x metric=%u <- %08x\n",
-                 rip_id, dest_router, prefix_length, next_hop_router, metric, src_router);
-        } else if (metric < dest_rt->metric || (metric == dest_rt->metric && rt->time - dest_rt->time >= CACHE_ROUTE_TIME_OUT/2)) {
-            rt->dest_router = dest_router;
-            rt->prefix_length = prefix_length;
-            rt->next_hop_router = next_hop_router;
-            rt->metric = metric;
-            cache_router_add(rt);
-            APP_DEBUG("[heart] C rip_id=%u dest=%08x/%u next=%08x metric=%u <- %08x\n",
-                 rip_id, dest_router, prefix_length, next_hop_router, metric, src_router);
+        if (rt) {
+            ctx.src_pctx = rt->ctx;
+            APP_DEBUG("[heart] send neigh probe heart -> %08x\n", rt->next_hop_router);
         } else {
-            APP_DEBUG("[heart] . rip_id=%u dest=%08x/%u next=%08x metric=%u <- %08x\n",
-                 rip_id, dest_router, prefix_length, next_hop_router, metric, src_router);
+            APP_INFO("[heart] send probe heart\n");
+            if (SWITCH_TCP == ctx.src_pctx->type && ctx.src_pctx->tcp.sock >= 0) {
+                if (ctx.src_pctx->msg_time && (cache_time - ctx.src_pctx->msg_time) > (3 * CACHE_ROUTE_UPDATE_TIME)) {
+                    APP_WARN("[heart] lost heart, close tcp %d\n", ctx.src_pctx->tcp.sock);
+                    switch_disconnect_tcp(ctx.src_pctx);
+                }
+            }
         }
+
+        switch_send_heart(&ctx, in, out, len, &psmb->param);
     }
-}
-
-int switch_send_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct cache_router_t *ppam)
-{
-    int dlen = -1;
-    int new_len = 0;
-    struct iphdr *iph = (struct iphdr *)buff1;
-    struct switch_rip_t *new_rip = (struct switch_rip_t *)((uint8_t *)iph + sizeof(struct iphdr));
-
-    memset(iph, 0, sizeof(struct iphdr));
-    iph->version = 4;
-    iph->ihl = 5;
-    iph->ttl = 0x40;
-    iph->daddr = 0xffffffff;
-    iph->saddr = htonl(ppam->router_mac);
-    iph->protocol = 0xff;
-    iph->check = switch_in_cksum((uint16_t *)iph, iph->ihl * 4); //-O3 Abnormal
-
-    memset(new_rip, 0, sizeof(struct switch_rip_t));
-    new_rip->type = RIP_TYPE_REQ;
-    new_rip->ver = 1;
-    new_rip->len = 0;
-    new_rip->router_mac = htonl(ppam->router_mac);
-
-    struct cache_router_t src_rt;
-    src_rt.dest_router = ctx->src_pctx->router_mac;
-    src_rt.table = ppam->table;
-    cache_route_iter(&src_rt, switch_rip_add_item, new_rip);
-
-    new_len = sizeof(struct iphdr) + RIP_HEADER_LEN + new_rip->len;
-
-    //Big Endian
-    new_rip->len = htons(new_rip->len);
-
-    if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(buff2, buff1, new_len);
-        if(dlen < 0) {
-            APP_WARN("[heart] encode error\n");
-            return dlen;
-        }
-        ctx->pbuf = buff1;
-        ctx->cbuf = buff2;
-        ctx->plen = new_len;
-        ctx->clen = dlen;
-    } else if (SWITCH_TAP == ctx->src_pctx->type) {
-        ctx->clen = ctx->plen = new_len;
-        ctx->cbuf = ctx->pbuf = buff1;
-    } else {
-        return -1;
-    }
-
-    ctx->type = 'h';
-    send_to_self(ctx);
-    return ctx->plen;
-}
-
-int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct cache_router_t *ppam)
-{
-    int dlen = -1;
-    uint8_t *in_buff = ctx->pbuf;
-    uint8_t *new_buff = ctx->cbuf;
-    int new_len = 0;
-    struct iphdr *iph = (struct iphdr *)in_buff;
-    int rlen = ctx->plen - RIP_HEADER_LEN;
-    struct switch_rip_t *rip = (struct switch_rip_t *)((uint8_t *)iph + sizeof(struct iphdr));
-    if (rlen < 0) {
-        APP_WARN("[heart] length error\n");
-        return -1;
-    }
-
-    if (RIP_TYPE_REQ == rip->type) {
-        struct iphdr *new_iph = (struct iphdr *)new_buff;
-        struct switch_rip_t *new_rip = (struct switch_rip_t *)((uint8_t *)new_iph + sizeof(struct iphdr));
-        memset(new_iph, 0, sizeof(struct iphdr));
-        new_iph->version = 4;
-        new_iph->ihl = 5;
-        new_iph->ttl = 0x40;
-        new_iph->daddr = 0xffffffff;
-        new_iph->saddr = htonl(ppam->router_mac);
-        new_iph->protocol = 0xff;
-        new_iph->check = switch_in_cksum((uint16_t *)new_iph, iph->ihl * 4);
-
-        //Little Endian
-        rip->len = ntohs(rip->len);
-        APP_DEBUG("[heart] new req info 0x%08x %u\n", ntohl(rip->router_mac), rip->len);
-        ctx->src_pctx->router_mac = ntohl(rip->router_mac);
-        struct cache_router_t rt, src_rt;
-        memcpy(&rt, ppam, sizeof(struct cache_router_t));
-        rt.router_mac = ppam->router_mac;
-        rt.dest_router = ntohl(rip->router_mac);
-        rt.prefix_length = 32;
-        rt.next_hop_router = ntohl(rip->router_mac);
-        rt.metric = 1;
-        rt.time = ppam->time;
-        rt.table = ppam->table;
-        rt.ctx = ctx->src_pctx;
-        //memcpy(&rt.ctx, ctx->src_pctx, sizeof(rt.ctx));
-        memcpy(&src_rt, &rt, sizeof(src_rt));
-        cache_router_add(&rt);
-        switch_rip_add_resp_item(&rt, rip);
-
-        memset(new_rip, 0, sizeof(struct switch_rip_t));
-        new_rip->type = RIP_TYPE_REP;
-        new_rip->ver = 1;
-        new_rip->len = 0;
-        new_rip->router_mac = htonl(ppam->router_mac);
-        cache_route_iter(&src_rt, switch_rip_add_item, new_rip);
-
-        new_len = sizeof(struct iphdr) + RIP_HEADER_LEN + new_rip->len;
-
-        //Big Endian
-        new_rip->len = htons(new_rip->len);
-
-    } else if (RIP_TYPE_REP == rip->type) {
-        //Little Endian
-        rip->len = ntohs(rip->len);
-        APP_DEBUG("[heart] new resp info 0x%08x %u\n", ntohl(rip->router_mac), rip->len);
-        ctx->src_pctx->router_mac = ntohl(rip->router_mac);
-        struct cache_router_t rt;
-        memcpy(&rt, ppam, sizeof(struct cache_router_t));
-        rt.router_mac = ppam->router_mac;
-        rt.dest_router = ntohl(rip->router_mac);
-        rt.prefix_length = 32;
-        rt.next_hop_router = ntohl(rip->router_mac);
-        rt.metric = 1;
-        rt.time = ppam->time;
-        rt.table = ppam->table;
-        rt.ctx = ctx->src_pctx;
-        //memcpy(&rt.ctx, ctx->src_pctx, sizeof(rt.ctx));
-        cache_router_add(&rt);
-        switch_rip_add_resp_item(&rt, rip);
-
-        return 0;
-    } else {
-        APP_WARN("[heart] new err info 0x%08x\n", ntohl(rip->router_mac));
-        return -1;
-    }
-
-    if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(in_buff, new_buff, new_len);
-        if(dlen < 0) {
-            APP_WARN("[heart] encode error\n");
-            return dlen;
-        }
-        ctx->pbuf = new_buff;
-        ctx->cbuf = in_buff;
-        ctx->plen = new_len;
-        ctx->clen = dlen;
-    } else {
-        return -1;
-    }
-
-    ctx->type = 'h';
-    send_to_self(ctx);
     return 0;
 }
 
@@ -1135,7 +888,6 @@ int switch_run(struct switch_args_t *args)
 {
     unsigned char in_buffer[BUF_SIZE * 2];
     unsigned char out_buffer[BUF_SIZE * 2];
-    uint32_t cache_time = 0;
     uint32_t last_heart_time = 0, last_route_time = 0;
     int sctx_count = 0;
     int ret = -1;
@@ -1268,8 +1020,9 @@ int switch_run(struct switch_args_t *args)
             APP_ERROR("inet_aton error\n");
             continue;
         }
-        smb.param.dest_router = ntohl(ipaddr.s_addr);
         smb.param.prefix_length = args->prefixs[i].len;
+        smb.param.dest_router = ntohl(ipaddr.s_addr);
+        smb.param.dest_router &= (0xffffffff << (32 - smb.param.prefix_length));
         cache_router_add(&smb.param);
     }
 
@@ -1281,7 +1034,7 @@ int switch_run(struct switch_args_t *args)
         fd_set readset;
         struct timeval timeout;
 
-        timeout.tv_sec = 2;
+        timeout.tv_sec = 1;
         timeout.tv_usec = 0;
 
         FD_ZERO(&readset);
@@ -1305,8 +1058,8 @@ int switch_run(struct switch_args_t *args)
             break;
         }
 
-        cache_time = get_time_ms();
-        smb.param.time = cache_time;
+        smb.current_time = get_time_ms();
+        smb.param.time = smb.current_time;
 
         list_for_each_entry_safe(sctx, stmp, &smb.head.list, list) {
             int cur_fd = switch_get_fd(sctx);
@@ -1357,53 +1110,19 @@ int switch_run(struct switch_args_t *args)
             }
         }
 
-        if (cache_time - last_heart_time > CACHE_ROUTE_UPDATE_TIME) {
-            last_heart_time = cache_time;
 
+        if (smb.current_time - last_route_time > CACHE_ROUTE_UPDATE_TIME) {
+            last_route_time = smb.current_time;
+            APP_INFO("active count: router = %d, sock = %d\n", cache_router_count(&smb.param), sock_count);
             list_for_each_entry_safe(sctx, stmp, &smb.head.list, list) {
-                UDP_CTX ctx;
-                ctx.src_pctx = sctx;
-                if (SWITCH_TAP == ctx.src_pctx->type)
-                    continue;
-                if (SWITCH_UDP == ctx.src_pctx->type && ctx.src_pctx->udp.if_bind)
-                    continue;
-                if (SWITCH_TCP == ctx.src_pctx->type && ctx.src_pctx->tcp.if_bind)
-                    continue;
-
-                struct cache_router_t *rt = NULL;
-                struct cache_router_t *s, *tmp;
-                cache_router_iter(&smb.param,s,tmp) {
-                    if (!s->ctx)
-                        continue;
-                    if (SWITCH_TAP == s->ctx->type)
-                        continue;
-                    if (SWITCH_UDP == s->ctx->type 
-                     && !memcmp(&ctx.src_pctx->udp.addr, &s->ctx->udp.addr, sizeof(struct sockaddr_storage))) {
-                        rt = s;
-                        break;
-                    }
-                    if (SWITCH_TCP == s->ctx->type 
-                     && !memcmp(&ctx.src_pctx->tcp.addr, &s->ctx->tcp.addr, sizeof(struct sockaddr_storage))) {
-                        rt = s;
-                        break;
-                    }
-                }
-
-                if (rt) {
-                    ctx.src_pctx = rt->ctx;
-                    APP_DEBUG("[heart] send neigh probe heart -> %08x\n", rt->next_hop_router);
-                } else {
-                    APP_DEBUG("[heart] send probe heart\n");
-                }
-
-                switch_send_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &smb.param);
+                switch_dump_send_router(sctx, NULL, "sock_list:");
             }
+            cache_route_printall(&smb.param);
         }
 
-        if (cache_time - last_route_time > CACHE_ROUTE_UPDATE_TIME) {
-            last_route_time = cache_time;
-            APP_INFO("active count: router = %d, sock = %d\n", cache_router_count(&smb.param), sock_count);
-            cache_route_printall(&smb.param);
+        if (smb.current_time - last_heart_time > CACHE_ROUTE_UPDATE_TIME) {
+            last_heart_time = smb.current_time;
+            switch_send_heart_timer(&smb, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE);
         }
     }
 exit:

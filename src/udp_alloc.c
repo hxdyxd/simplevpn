@@ -30,6 +30,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <net/if.h>
 #include "app_debug.h"
 
 int vpn_udp_alloc(int if_bind, const char *host, const char *port,

@@ -24,7 +24,6 @@
 
 #include <stdint.h>
 #include <sys/socket.h>
-#include <net/if.h>
 
 
 int vpn_udp_alloc(int if_bind, const char *host, const char *port,

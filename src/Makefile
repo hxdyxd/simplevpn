@@ -16,6 +16,8 @@ OBJS +=  simplevpn.o
 OBJS +=  udp_alloc.o
 OBJS +=  switch.o
 OBJS +=  cache_table.o
+OBJS +=  rip.o
+OBJS +=  utils.o
 
 C_INCLUDES += -I $(shell pwd)/
 

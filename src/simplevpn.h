@@ -24,7 +24,6 @@
 
 #include <stdint.h>
 #include <sys/socket.h>
-#include <net/if.h>
 #include "list.h"
 #include "uthash.h"
 
@@ -37,6 +36,8 @@
 #define MAX_CTX_NUM      (MAX_SERVER_NUM + MAX_LOCAL_NUM + MAX_TAP_NUM)
 #define DEFAULT_METRIC   100
 #define MAX_PREFIX_NUM   10
+
+#define SWITCH_IFNAMSIZ 16
 
 enum switch_type {
     SWITCH_NONE = 0,
@@ -67,6 +68,7 @@ struct switch_ctx_t {
     uint32_t router_mac;
     enum switch_type type;
     struct list_head list;
+    uint32_t msg_time;
     union {
         struct {
             int sock;
@@ -94,7 +96,7 @@ struct switch_ctx_t {
         struct {
             int fd;
             int if_native;
-            char ifname[IFNAMSIZ];
+            char ifname[SWITCH_IFNAMSIZ];
         }tap;
     };
 };
@@ -125,6 +127,7 @@ struct cache_router_t {
 struct switch_main_t {
     struct switch_ctx_t   head;
     struct cache_router_t param;
+    uint32_t current_time;
 };
 
 struct switch_args_t {
@@ -156,5 +159,28 @@ struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct s
 struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, const char *host, const char *port);
 struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, const char *host, const char *port);
 struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16_t mtu);
+
+//switch
+int switch_read_encode(uint8_t *out, uint8_t *in, int rlen);
+int switch_address_cmp(struct switch_ctx_t *ctxa, struct switch_ctx_t *ctxb);
+
+//rip
+typedef struct {
+    void *cbuf;
+    void *pbuf;
+    int clen;
+    int plen;
+    char type;
+    uint32_t saddr;
+    uint32_t daddr;
+    uint32_t default_addr;
+    struct switch_ctx_t *src_pctx;
+} UDP_CTX;
+
+//utils
+void msg_dump(void *buf, int len);
+uint16_t switch_in_cksum(const uint16_t *buf, int bufsz);
+
+
 
 #endif
