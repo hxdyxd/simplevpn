@@ -171,12 +171,11 @@ void cache_router_add(struct cache_router_t *rt)
     s->metric = rt->metric;
     s->time = rt->time;
     s->rtt_time = s->time - s->rtt_send_time;
-    s->rtt_send_time = rt->rtt_send_time;
     s->add_router = rt->add_router;
     s->router_data = rt->router_data;
 
     if (rt->ctx && SWITCH_UDP == rt->ctx->type && rt->ctx->udp.if_bind) {
-        if (!s->ctx) {
+        if (!s->ctx || !s->alloced_ctx) {
             s->ctx = malloc(sizeof(struct switch_ctx_t));
             s->alloced_ctx = 1;
             APP_DEBUG("alloced ctx %x = %p\n", s->dest_router, rt->ctx);
@@ -274,7 +273,7 @@ void cache_route_printall(struct cache_router_t *rt)
             if (s->add_router) {
                 s->add_router(s, 0);
             }
-            HASH_DEL(*rt->table, s);  /* user: pointer to deletee */
+            HASH_DEL(*rt->table, s);  /* user: pointer to delete */
             if (s->alloced_ctx && s->ctx)
                 free(s->ctx);
             free(s);             /* optional; it's up to you! */

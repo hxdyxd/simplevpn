@@ -56,6 +56,7 @@ void switch_rip_add_item(const struct cache_router_t *src_rt, struct cache_route
         return;
     }
 
+    rt->rtt_send_time = get_time_ms();
     rip_sum = rip->len / sizeof(struct switch_rip_item_t);
     if (rip_sum >= RIP_ITEM_MAX) {
         APP_WARN("[heart] rip_sum too large %u\n", rip_sum);
@@ -70,7 +71,6 @@ void switch_rip_add_item(const struct cache_router_t *src_rt, struct cache_route
     if (src_rt->dest_router == rt->next_hop_router)
         return;
 
-    rt->rtt_send_time = get_time_ms();
     rip->info[rip_sum].next_hop_router = htonl(rt->next_hop_router);
     rip->info[rip_sum].prefix_length = rt->prefix_length;
     rip->info[rip_sum].dest_router = htonl(rt->dest_router);
