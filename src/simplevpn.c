@@ -26,7 +26,9 @@
 #include "app_debug.h"
 #include "daemon.h"
 #include "simplevpn.h"
+#ifdef USE_CRYPTO
 #include "crypto.h"
+#endif
 
 #define VERSION "0.1.2"
 #define DEBUG_INFO     1
@@ -63,8 +65,10 @@ void usage(void)
         "       -p <prefix>                Your network prefixs address.\n");
     PRINTF(
         "       -d <cmd>                   Daemon start/stop/restart\n");
+#ifdef USE_CRYPTO
     PRINTF(
         "       -s <block_size>            Crypto speed test\n");
+#endif
     PRINTF(
         "       -e <log level>             0:never    1:fatal   2:error   3:warn\n");
     PRINTF(
@@ -176,7 +180,9 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
             if (sscanf(optarg, "%d", &block_size) != 1) {
                 block_size = args->mtu;
             }
+#ifdef USE_CRYPTO
             exit(crypto_speed_test(block_size));
+#endif
         case 'v':
         case 'h':
             usage();
