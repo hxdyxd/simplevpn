@@ -91,7 +91,9 @@ static int switch_write(struct switch_ctx_t *psctx, UDP_CTX *ctx_p)
         }
 
         if (psctx->tcp.write_size) {
-            APP_WARN("switch_write: write buffer is full, pos = %d, size = %d\n", psctx->tcp.write_pos, psctx->tcp.write_size);
+            if (psctx->tcp.write_pos > psctx->tcp.write_size) {
+                APP_WARN("switch_write %d: write buffer is full, pos = %d, size = %d\n", psctx->tcp.sock, psctx->tcp.write_pos, psctx->tcp.write_size);
+            }
         } else {
             uint16_t write_size = ctx_p->clen;
 
@@ -120,9 +122,9 @@ static int switch_write(struct switch_ctx_t *psctx, UDP_CTX *ctx_p)
             } else if (errno == ENETUNREACH || errno == ENETDOWN ||
                      errno == EPERM || errno == EINTR || errno == EMSGSIZE) {
                 // just log, do nothing
-                APP_WARN("send: %s\n", strerror(errno));
+                APP_WARN("send %d: %s\n", psctx->tcp.sock, strerror(errno));
             } else {
-                APP_ERROR("send: %s\n", strerror(errno));
+                APP_ERROR("send %d: %s\n", psctx->tcp.sock, strerror(errno));
                 // TODO rebuild socket
             }
             return 0;
@@ -281,6 +283,7 @@ struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, cons
     }
 
     psctx->type = SWITCH_UDP;
+    psctx->events = SWITCH_POLLIN;
     psctx->udp.sock = sock;
     psctx->udp.if_bind = if_bind;
     psctx->udp.if_local = 1;
@@ -295,7 +298,7 @@ int switch_disconnect_tcp(struct switch_ctx_t *ctx)
         return -1;
     }
 
-    APP_WARN("tcp connect disconnect %d\n", ctx->tcp.sock);
+    APP_WARN("tcp connect disconnect sock=%d\n", ctx->tcp.sock);
     if (ctx->tcp.write_buffer)
         free(ctx->tcp.write_buffer);
     if (ctx->tcp.read_buffer)
@@ -305,6 +308,31 @@ int switch_disconnect_tcp(struct switch_ctx_t *ctx)
     ctx->tcp.write_buffer = NULL;
     ctx->tcp.read_buffer = NULL;
     ctx->tcp.sock = -1;
+    ctx->events = 0;
+    ctx->msg_time = 0;
+    return 0;
+}
+
+int switch_connected_tcp(struct switch_ctx_t *ctx)
+{
+    int error = 0;
+    socklen_t len = sizeof(error);
+
+    if (SWITCH_TCP != ctx->type) {
+        APP_ERROR("Failed to connected tcp %d\n", ctx->tcp.sock);
+        return -1;
+    }
+
+    getsockopt(ctx->tcp.sock, SOL_SOCKET, SO_ERROR, &error, &len);
+    if (error != 0) {
+        APP_WARN("tcp connected fail sock=%d %s:%s %s\n", ctx->tcp.sock, ctx->tcp.local_addr.host, ctx->tcp.local_addr.port, strerror(error));
+        return switch_disconnect_tcp(ctx);
+    }
+
+    APP_INFO("tcp connected success sock=%d %s:%s\n", ctx->tcp.sock, ctx->tcp.local_addr.host, ctx->tcp.local_addr.port);
+
+    ctx->events &= ~SWITCH_POLLOUT;
+    ctx->events |= SWITCH_POLLIN;
     return 0;
 }
 
@@ -330,14 +358,15 @@ int switch_reconnect_tcp(struct switch_ctx_t *ctx)
         return sock;
     }
 
-    APP_INFO("tcp reconnect success %s:%s\n", ctx->tcp.local_addr.host, ctx->tcp.local_addr.port);
-
     if (ctx->tcp.write_buffer)
         free(ctx->tcp.write_buffer);
     if (ctx->tcp.read_buffer)
         free(ctx->tcp.read_buffer);
     if (ctx->tcp.sock >= 0)
         close(ctx->tcp.sock);
+
+    ctx->msg_time = 0;
+    ctx->events = SWITCH_POLLOUT;
     ctx->tcp.sock = sock;
     ctx->tcp.write_buffer = NULL;
     ctx->tcp.write_buffer_size = 0;
@@ -375,6 +404,10 @@ struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, cons
     }
 
     psctx->type = SWITCH_TCP;
+    if (if_bind)
+        psctx->events = SWITCH_POLLIN;
+    else
+        psctx->events = SWITCH_POLLOUT;
     psctx->tcp.sock = sock;
     psctx->tcp.if_bind = if_bind;
     psctx->tcp.if_local = 1;
@@ -399,7 +432,7 @@ struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct s
     int sock;
     socklen_t sin_size = sizeof(struct sockaddr_storage);
     char addr_buf[INET6_ADDRSTRLEN];
-    char *ip = "";
+    const char *ip = "";
     uint16_t port = 0;
 
     if (!ctx->tcp.if_bind || !ctx->tcp.if_local) {
@@ -420,15 +453,22 @@ struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct s
         return NULL;
     }
 
-    r = vpn_sock_setblocking(sock, 0);
+    r = vpn_sock_set_blocking(sock, 0);
     if (r < 0) {
         APP_ERROR("sock_setblocking(fd = %d)\n", sock);
         return NULL;
     }
 
+    r = vpn_sock_set_keepalive(sock, 1, TCP_KEEPALIVE_TIME, TCP_KEEPALIVE_INTVL, TCP_KEEPALIVE_CNT);
+    if (r < 0) {
+        APP_ERROR("sock_set_keepalive(fd = %d)\n", sock);
+        return NULL;
+    }
+
     vpn_udp_ntop(&psctx->tcp.addr, addr_buf, sizeof(addr_buf), &ip, &port);
-    APP_INFO("accept tcp %d from %s:%u\n", sock, ip, port);
+    APP_INFO("accept tcp sock=%d from %s:%u\n", sock, ip, port);
     psctx->type = SWITCH_TCP;
+    psctx->events = SWITCH_POLLIN;
     psctx->tcp.sock = sock;
     psctx->tcp.if_bind = 1;
     psctx->tcp.if_local = 0;
@@ -448,7 +488,8 @@ struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16
 {
     struct ifreq ifr;
     int fd, err;
-    char *clonedev = "/dev/net/tun";
+    char *tundev1 = "/dev/net/tun";
+    char *tundev2 = "/dev/tun";
 
     struct switch_ctx_t *psctx = malloc(sizeof(struct switch_ctx_t));
     if (!psctx) {
@@ -457,9 +498,11 @@ struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16
     }
     memset(psctx, 0, sizeof(struct switch_ctx_t));
 
-    if ((fd = open(clonedev, O_RDWR)) < 0) {
-        free(psctx);
-        return NULL;
+    if ((fd = open(tundev1, O_RDWR)) < 0) {
+        if ((fd = open(tundev2, O_RDWR)) < 0) {
+            free(psctx);
+            return NULL;
+        }
     }
 
     memset(&ifr, 0, sizeof(ifr));
@@ -490,6 +533,7 @@ struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16
     APP_INFO(" %s\n", sys_cmd);
 
     psctx->type = SWITCH_TAP;
+    psctx->events = SWITCH_POLLIN;
     psctx->tap.fd = fd;
     psctx->tap.if_native = 1;
     strncpy(psctx->tap.ifname, ifr.ifr_name, sizeof(psctx->tap.ifname));
@@ -505,6 +549,7 @@ struct switch_ctx_t *switch_add_tun_native(struct switch_main_t *smb, int tun_fd
         return NULL;
     }
     psctx->type = SWITCH_TAP;
+    psctx->events = SWITCH_POLLIN;
     psctx->tap.fd = tun_fd;
     psctx->tap.if_native = 0;
     strcpy(psctx->tap.ifname, name);
@@ -697,10 +742,10 @@ fail_reconnect:
                 } else if (errno == ENETUNREACH || errno == ENETDOWN ||
                         errno == EPERM || errno == EINTR) {
                     // just log, do nothing
-                    APP_WARN("recvfrom %s\n", strerror(errno));
+                    APP_WARN("recv %d: %s\n", psctx->tcp.sock, strerror(errno));
                     return rlen;
                 } else {
-                    APP_ERROR("recvfrom %s\n", strerror(errno));
+                    APP_ERROR("recv %d: %s\n", psctx->tcp.sock, strerror(errno));
                     // TODO rebuild socket
                     return rlen;
                 }
@@ -750,7 +795,6 @@ int switch_read_decode(uint8_t *out, uint8_t *in, int rlen)
     if (crypto_is_enabled()) {
         dlen = crypto_decrypt(out, in, rlen);
         if(dlen < 0) {
-            APP_WARN("decrypt error, len = %d\n", rlen);
             return dlen;
         }
     } else
@@ -795,7 +839,6 @@ int switch_read_encode(uint8_t *out, uint8_t *in, int rlen)
     if (crypto_is_enabled()) {
         dlen = crypto_encrypt(out, in, rlen);
         if(dlen < 0) {
-            APP_WARN("encrypt error, len = %d\n", rlen);
             return dlen;
         }
     } else
@@ -818,6 +861,7 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
     if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
         dlen = switch_read_decode(buff2, buff1, rlen);
         if(dlen < 0) {
+            APP_WARN("decrypt error, sock = %d, len = %d\n", ctx->src_pctx->sock, rlen);
             return dlen;
         }
         ctx->pbuf = buff2;
@@ -827,6 +871,7 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
     } else if (SWITCH_TAP == ctx->src_pctx->type) {
         dlen = switch_read_encode(buff2, buff1, rlen);
         if(dlen < 0) {
+            APP_WARN("encrypt error, sock = %d, len = %d\n", ctx->src_pctx->sock, rlen);
             return dlen;
         }
         ctx->pbuf = buff1;
@@ -1031,27 +1076,31 @@ int switch_run(struct switch_args_t *args)
     while (args->running) {
         int maxsock = 0;
         int sock_count = 0;
-        fd_set readset;
+        fd_set readset, writeset;
         struct timeval timeout;
 
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
 
         FD_ZERO(&readset);
+        FD_ZERO(&writeset);
         list_for_each_entry_safe(sctx, stmp, &smb.head.list, list) {
             int cur_fd = switch_get_fd(sctx);
             if (cur_fd < 0) {
                 continue;
             }
 
-            FD_SET(cur_fd, &readset);
+            if (sctx->events & SWITCH_POLLIN)
+                FD_SET(cur_fd, &readset);
+            if (sctx->events & SWITCH_POLLOUT)
+                FD_SET(cur_fd, &writeset);
             if(cur_fd > maxsock) {
                 maxsock = cur_fd;
             }
             sock_count++;
         }
 
-        if (-1 == select(maxsock + 1, &readset, NULL, NULL, &timeout)) {
+        if (-1 == select(maxsock + 1, &readset, &writeset, NULL, &timeout)) {
             if (errno == EINTR)
                 continue;
             APP_ERROR("select() = %s\n", strerror(errno));
@@ -1088,7 +1137,7 @@ int switch_run(struct switch_args_t *args)
                 uint8_t version = iph->version;
 
                 if (version != 4) {
-                    APP_WARN("verssion = %u error\n", version);
+                    APP_DEBUG("verssion = %u error\n", version);
                     continue;
                 }
 
@@ -1107,6 +1156,10 @@ int switch_run(struct switch_args_t *args)
                 ctx.daddr = daddr;
                 ctx.default_addr = default_mac;
                 send_to_router(&ctx, &smb.param);
+            }
+
+            if (FD_ISSET(cur_fd, &writeset)) {
+                switch_connected_tcp(sctx);
             }
         }
 

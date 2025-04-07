@@ -26,6 +26,7 @@
 #include "app_debug.h"
 #include "daemon.h"
 #include "simplevpn.h"
+#include "crypto.h"
 
 #define VERSION "0.1.2"
 #define DEBUG_INFO     1
@@ -63,6 +64,8 @@ void usage(void)
     PRINTF(
         "       -d <cmd>                   Daemon start/stop/restart\n");
     PRINTF(
+        "       -s <block_size>            Crypto speed test\n");
+    PRINTF(
         "       -e <log level>             0:never    1:fatal   2:error   3:warn\n");
     PRINTF(
         "                                  4:info (default)     5:debug   6:trace\n");
@@ -77,6 +80,7 @@ void usage(void)
 int args_parse(struct switch_args_t *args, int argc, char **argv)
 {
     int ch;
+    int block_size = 0;
 
     memset(args, 0, sizeof(struct switch_args_t));
     args->password = DEFAULT_PASSWORD;
@@ -86,7 +90,7 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
     args->pid_file = "/var/run/simplevpn.pid";
     args->log_file = "/var/run/simplevpn.log";
 
-    while((ch = getopt(argc, argv, "l:r:L:R:p:n:g:k:e:d:tvh")) != -1) {
+    while((ch = getopt(argc, argv, "l:r:L:R:p:n:g:k:e:d:s:tvh")) != -1) {
         switch(ch) {
         case 'L':
             args->local_addr[args->local_count].if_tcp = 1;
@@ -168,6 +172,11 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
             }
             log_level = log_warn;
             break;
+        case 's':
+            if (sscanf(optarg, "%d", &block_size) != 1) {
+                block_size = args->mtu;
+            }
+            exit(crypto_speed_test(block_size));
         case 'v':
         case 'h':
             usage();

@@ -29,8 +29,10 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <net/if.h>
+#include "udp_alloc.h"
 #include "app_debug.h"
 
 int vpn_udp_alloc(int if_bind, const char *host, const char *port,
@@ -95,7 +97,7 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port,
 {
     struct addrinfo hints;
     struct addrinfo *res;
-    int sock, r, flags;
+    int sock, r;
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_socktype = SOCK_STREAM;
@@ -117,14 +119,19 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port,
         return -1;
     }
 
+    r = vpn_sock_set_blocking(sock, 0);
+    if (r < 0) {
+        APP_WARN("vpn_sock_set_blocking(): %s\n", strerror(errno));
+        close(sock);
+        freeaddrinfo(res);
+        return -1;
+    }
+
     if (if_bind) {
         int opt = 1;
         r = setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
         if (r < 0) {
-            APP_ERROR("setsockopt: %s\n", strerror(errno));
-            close(sock);
-            freeaddrinfo(res);
-            return -1;
+            APP_WARN("setsockopt(SO_REUSEPORT): %s\n", strerror(errno));
         }
 
         r = bind(sock, res->ai_addr, res->ai_addrlen);
@@ -144,7 +151,7 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port,
         }
     } else {
         r = connect(sock, res->ai_addr, res->ai_addrlen);
-        if (r < 0) {
+        if (r < 0 && errno != EINPROGRESS) {
             APP_ERROR("connect(fd = %d, %s:%s): %s\n", sock, host, port, strerror(errno));
             close(sock);
             freeaddrinfo(res);
@@ -152,16 +159,7 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port,
         }
     }
     freeaddrinfo(res);
-
-    flags = fcntl(sock, F_GETFL, 0);
-    if (flags != -1) {
-        if (-1 != fcntl(sock, F_SETFL, flags | O_NONBLOCK))
-            return sock;
-    }
-    APP_ERROR("fcntl error\n");
-
-    close(sock);
-    return -1;
+    return sock;
 }
 
 int vpn_get_sockaddr(const char *host, const char *port,
@@ -225,7 +223,7 @@ int vpn_udp_ntop(struct sockaddr_storage *src_addr, char *addr_buf, int len, con
     return 0;
 }
 
-int vpn_sock_setblocking(int sock, int if_block)
+int vpn_sock_set_blocking(int sock, int if_block)
 {
     int flags, r;
 
@@ -245,5 +243,41 @@ int vpn_sock_setblocking(int sock, int if_block)
         APP_ERROR("fcntl: %s\n", strerror(errno));
         return -1;
     }
+    return 0;
+}
+
+int vpn_sock_set_keepalive(int sock, int enable, int time, int intvl, int probes)
+{
+    int ret;
+    int keepalive = enable;
+
+    ret = setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+    if (ret < 0) {
+        APP_ERROR("setsockopt(SO_KEEPALIVE) failed: %s", strerror(errno));
+        return -1;
+    }
+
+    if (!enable) {
+        return 0;
+    }
+
+    ret = setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &time, sizeof(time));
+    if (ret < 0) {
+        APP_ERROR("setsockopt(TCP_KEEPIDLE) failed: %s", strerror(errno));
+        return -1;
+    }
+
+    ret = setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+    if (ret < 0) {
+        APP_ERROR("setsockopt(TCP_KEEPINTVL) failed: %s", strerror(errno));
+        return -1;
+    }
+
+    ret = setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &probes, sizeof(probes));
+    if (ret < 0) {
+        APP_ERROR("setsockopt(TCP_KEEPCNT) failed: %s", strerror(errno));
+        return -1;
+    }
+
     return 0;
 }

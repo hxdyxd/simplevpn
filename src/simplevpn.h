@@ -37,7 +37,15 @@
 #define DEFAULT_METRIC   100
 #define MAX_PREFIX_NUM   10
 
+#define TCP_KEEPALIVE_TIME     60
+#define TCP_KEEPALIVE_INTVL    10
+#define TCP_KEEPALIVE_CNT      3
+
 #define SWITCH_IFNAMSIZ 16
+
+#define SWITCH_POLLIN   0x0001
+#define SWITCH_POLLOUT  0x0004
+#define SWITCH_POLLERR  0x0008
 
 enum switch_type {
     SWITCH_NONE = 0,
@@ -68,8 +76,11 @@ struct switch_ctx_t {
     uint32_t router_mac;
     enum switch_type type;
     struct list_head list;
+    uint64_t counter;
     uint32_t msg_time;
+    uint32_t events;
     union {
+        int sock;
         struct {
             int sock;
             int if_bind;

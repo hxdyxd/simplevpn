@@ -39,7 +39,7 @@ struct sockaddr_storage {
 
 static int switch_dump_ctx__(struct switch_ctx_t *psctx, char *msg, void *buff, int len)
 {
-    char *ip = "";
+    const char *ip = "";
     uint16_t port = 0;
     char addr_buf[INET6_ADDRSTRLEN];
     if (SWITCH_TAP == psctx->type) {

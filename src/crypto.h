@@ -37,9 +37,9 @@ int crypto_encrypt(uint8_t *out_buf, uint8_t *in_buf, int in_len);
 int crypto_decrypt(uint8_t *out_buf, uint8_t *in_buf, int in_len);
 
 int crypto_is_enabled(void);
+
 void crypto_gen_rand(uint8_t *out_buf, int in_len);
 
-#define CRYPTO_KEY_LEN    (32)
-#define CRYPTO_NOICE_LEN  (12)
+int crypto_speed_test(int test_len);
 
 #endif
