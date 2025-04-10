@@ -867,7 +867,7 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
     if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
         dlen = switch_read_decode(buff2, buff1, rlen);
         if(dlen < 0) {
-            APP_WARN("invalid packet detected (socket: %s, len: %d)\n", ctx->src_pctx->sock, rlen);
+            APP_WARN("invalid packet detected (socket: %d, len: %d)\n", ctx->src_pctx->sock, rlen);
             return dlen;
         }
         ctx->pbuf = buff2;
@@ -877,7 +877,7 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
     } else if (SWITCH_TAP == ctx->src_pctx->type) {
         dlen = switch_read_encode(buff2, buff1, rlen);
         if(dlen < 0) {
-            APP_WARN("encrypt error (socket: %s, len: %d)\n", ctx->src_pctx->sock, rlen);
+            APP_WARN("encrypt error (socket: %d, len: %d)\n", ctx->src_pctx->sock, rlen);
             return dlen;
         }
         ctx->pbuf = buff1;
@@ -1143,7 +1143,7 @@ int switch_run(struct switch_args_t *args)
                 uint8_t version = iph->version;
 
                 if (version != 4) {
-                    APP_DEBUG("invalid packet type - expected ipv4, received type %d\n", version);
+                    APP_DEBUG("invalid packet type - expected ipv4, received type %u\n", version);
                     continue;
                 }
 
