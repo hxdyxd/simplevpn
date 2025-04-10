@@ -64,6 +64,7 @@ enum cmd_type {
 struct switch_addr_t {
     char host[128];
     char port[32];
+    char ifname[32];
     int if_tcp;
 };
 
@@ -167,8 +168,8 @@ struct switch_args_t {
 int switch_run(struct switch_args_t *args);
 int switch_reconnect_tcp(struct switch_ctx_t *ctx);
 struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct switch_ctx_t *ctx);
-struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, const char *host, const char *port);
-struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, const char *host, const char *port);
+struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, struct switch_addr_t *addr);
+struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, struct switch_addr_t *addr);
 struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16_t mtu);
 
 //switch

@@ -99,12 +99,12 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
         case 'L':
             args->local_addr[args->local_count].if_tcp = 1;
         case 'l':
-            if (sscanf(optarg, "[%[^]]]:%s", args->local_addr[args->local_count].host,
-             args->local_addr[args->local_count].port) == 2) {
+            if (sscanf(optarg, "[%[^]]]:%[^:]:%s", args->local_addr[args->local_count].host,
+             args->local_addr[args->local_count].port, args->local_addr[args->local_count].ifname) >= 2) {
                 args->local_count++;
                 args->ipv6 = 1;
-            } else if (sscanf(optarg, "%[^:]:%s", args->local_addr[args->local_count].host,
-             args->local_addr[args->local_count].port) == 2) {
+            } else if (sscanf(optarg, "%[^:]:%[^:]:%s", args->local_addr[args->local_count].host,
+             args->local_addr[args->local_count].port, args->local_addr[args->local_count].ifname) >= 2) {
                 args->local_count++;
             } else {
                 APP_ERROR("failed to parse local address\n");
@@ -113,12 +113,12 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
         case 'R':
             args->server_addr[args->server_count].if_tcp = 1;
         case 'r':
-            if (sscanf(optarg, "[%[^]]]:%s", args->server_addr[args->server_count].host,
-             args->server_addr[args->server_count].port) == 2) {
+            if (sscanf(optarg, "[%[^]]]:%[^:]:%s", args->server_addr[args->server_count].host,
+             args->server_addr[args->server_count].port, args->server_addr[args->server_count].ifname) >= 2) {
                 args->server_count++;
                 args->ipv6 = 1;
-            } else if (sscanf(optarg, "%[^:]:%s", args->server_addr[args->server_count].host,
-             args->server_addr[args->server_count].port) == 2) {
+            } else if (sscanf(optarg, "%[^:]:%[^:]:%s", args->server_addr[args->server_count].host,
+             args->server_addr[args->server_count].port, args->server_addr[args->server_count].ifname) >= 2) {
                 args->server_count++;
             } else {
                 APP_ERROR("failed to parse remote address\n");
@@ -197,6 +197,7 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
     return 0;
 }
 
+
 int main(int argc, char **argv)
 {
     struct switch_args_t args;
@@ -238,10 +239,12 @@ int main(int argc, char **argv)
     }
 
     for (int i = 0; i < args.local_count; i++) {
-        APP_INFO("bind: %s://%s:%s\n", args.local_addr[i].if_tcp?"tcp":"udp", args.local_addr[i].host, args.local_addr[i].port);
+        APP_INFO("bind: %s://%s:%s [%s]\n", args.local_addr[i].if_tcp?"tcp":"udp",
+                                         args.local_addr[i].host, args.local_addr[i].port, args.local_addr[i].ifname);
     }
     for (int i = 0; i < args.server_count; i++) {
-        APP_INFO("remote: %s://%s:%s\n", args.server_addr[i].if_tcp?"tcp":"udp", args.server_addr[i].host, args.server_addr[i].port);
+        APP_INFO("remote: %s://%s:%s [%s]\n", args.server_addr[i].if_tcp?"tcp":"udp",
+                                         args.server_addr[i].host, args.server_addr[i].port, args.server_addr[i].ifname);
     }
     if (args.if_local_network) {
         APP_INFO("local device address: %s\n", args.local_network);

@@ -35,7 +35,7 @@
 #include "udp_alloc.h"
 #include "app_debug.h"
 
-int vpn_udp_alloc(int if_bind, const char *host, const char *port,
+int vpn_udp_alloc(int if_bind, const char *host, const char *port, const char *ifname,
                   struct sockaddr_storage *addr, socklen_t* addrlen)
 {
     struct addrinfo hints;
@@ -60,6 +60,15 @@ int vpn_udp_alloc(int if_bind, const char *host, const char *port,
         APP_ERROR("can not create socket: %s\n", strerror(errno));
         freeaddrinfo(res);
         return -1;
+    }
+
+    if (0 != strlen(ifname)) {
+        r = vpn_sock_bind_interface(sock, ifname);
+        if (r < 0) {
+            close(sock);
+            freeaddrinfo(res);
+            return -1;
+        }
     }
 
     if (if_bind) {
@@ -92,7 +101,7 @@ int vpn_udp_alloc(int if_bind, const char *host, const char *port,
     return -1;
 }
 
-int vpn_tcp_alloc(int if_bind, const char *host, const char *port,
+int vpn_tcp_alloc(int if_bind, const char *host, const char *port, const char *ifname,
                   struct sockaddr_storage *addr, socklen_t* addrlen)
 {
     struct addrinfo hints;
@@ -117,6 +126,15 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port,
         APP_ERROR("can not create socket: %s\n", strerror(errno));
         freeaddrinfo(res);
         return -1;
+    }
+
+    if (0 != strlen(ifname)) {
+        r = vpn_sock_bind_interface(sock, ifname);
+        if (r < 0) {
+            close(sock);
+            freeaddrinfo(res);
+            return -1;
+        }
     }
 
     r = vpn_sock_set_blocking(sock, 0);
@@ -253,7 +271,7 @@ int vpn_sock_set_keepalive(int sock, int enable, int time, int intvl, int probes
 
     ret = setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
     if (ret < 0) {
-        APP_ERROR("setsockopt(SO_KEEPALIVE) failed: %s", strerror(errno));
+        APP_ERROR("setsockopt(SO_KEEPALIVE) failed: %s\n", strerror(errno));
         return -1;
     }
 
@@ -263,21 +281,33 @@ int vpn_sock_set_keepalive(int sock, int enable, int time, int intvl, int probes
 
     ret = setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &time, sizeof(time));
     if (ret < 0) {
-        APP_ERROR("setsockopt(TCP_KEEPIDLE) failed: %s", strerror(errno));
+        APP_ERROR("setsockopt(TCP_KEEPIDLE) failed: %s\n", strerror(errno));
         return -1;
     }
 
     ret = setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
     if (ret < 0) {
-        APP_ERROR("setsockopt(TCP_KEEPINTVL) failed: %s", strerror(errno));
+        APP_ERROR("setsockopt(TCP_KEEPINTVL) failed: %s\n", strerror(errno));
         return -1;
     }
 
     ret = setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &probes, sizeof(probes));
     if (ret < 0) {
-        APP_ERROR("setsockopt(TCP_KEEPCNT) failed: %s", strerror(errno));
+        APP_ERROR("setsockopt(TCP_KEEPCNT) failed: %s\n", strerror(errno));
         return -1;
     }
 
     return 0;
+}
+
+int vpn_sock_bind_interface(int sock, const char *ifname)
+{
+    int ret;
+    ret = setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ifname, strlen(ifname));
+    if (ret < 0) {
+        APP_ERROR("setsockopt(SO_BINDTODEVICE) failed: %s\n", strerror(errno));
+        return -1;
+    }
+    APP_INFO("bind sock=%d to interface: %s\n", sock, ifname);
+    return ret;
 }

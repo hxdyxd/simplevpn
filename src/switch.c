@@ -259,7 +259,7 @@ static void send_to_router(UDP_CTX *ctx_p, struct cache_router_t *ppam)
     send_to_target_router(&src_rt, target, ctx_p);
 }
 
-struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, const char *host, const char *port)
+struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, struct switch_addr_t *addr)
 {
     int sock;
     socklen_t sin_size;
@@ -271,14 +271,15 @@ struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, cons
     }
     memset(psctx, 0, sizeof(struct switch_ctx_t));
 
-    APP_DEBUG("add udp %s:%s\n", host, port);
+    APP_DEBUG("add udp %s:%s [%s]\n", addr->host, addr->port, addr->ifname);
     if (if_bind) {
-        sock = vpn_udp_alloc(if_bind, host, port, &psctx->udp.localaddr, &sin_size);
+        sock = vpn_udp_alloc(if_bind, addr->host, addr->port, addr->ifname, &psctx->udp.localaddr, &sin_size);
     } else {
-        sock = vpn_udp_alloc(if_bind, host, port, &psctx->udp.addr, &sin_size);
+        sock = vpn_udp_alloc(if_bind, addr->host, addr->port, addr->ifname, &psctx->udp.addr, &sin_size);
     }
     if (sock < 0) {
         APP_ERROR("Failed to create udp socket\n");
+        free(psctx);
         return NULL;
     }
 
@@ -340,6 +341,7 @@ int switch_reconnect_tcp(struct switch_ctx_t *ctx)
 {
     int sock;
     socklen_t sin_size;
+    struct switch_addr_t *addr = &ctx->tcp.local_addr;
 
     if (SWITCH_TCP != ctx->type || ctx->tcp.if_bind) {
         APP_ERROR("Failed to reconnect tcp\n");
@@ -350,9 +352,9 @@ int switch_reconnect_tcp(struct switch_ctx_t *ctx)
         switch_disconnect_tcp(ctx);
     }
 
-    APP_INFO("tcp reconnect %s:%s\n", ctx->tcp.local_addr.host, ctx->tcp.local_addr.port);
+    APP_INFO("tcp reconnect %s:%s [%s]\n", addr->host, addr->port, addr->ifname);
 
-    sock = vpn_tcp_alloc(0, ctx->tcp.local_addr.host, ctx->tcp.local_addr.port, &ctx->tcp.addr, &sin_size);
+    sock = vpn_tcp_alloc(0, addr->host, addr->port, addr->ifname, &ctx->tcp.addr, &sin_size);
     if (sock < 0) {
         APP_ERROR("Failed to create tcp socket\n");
         return sock;
@@ -379,7 +381,7 @@ int switch_reconnect_tcp(struct switch_ctx_t *ctx)
     return sock;
 }
 
-struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, const char *host, const char *port)
+struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, struct switch_addr_t *addr)
 {
     int sock;
     socklen_t sin_size;
@@ -391,15 +393,16 @@ struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, cons
     }
     memset(psctx, 0, sizeof(struct switch_ctx_t));
 
-    APP_DEBUG("add tcp %s:%s\n", host, port);
+    APP_DEBUG("add tcp %s:%s [%s]\n", addr->host, addr->port, addr->ifname);
     if (if_bind) {
-        sock = vpn_tcp_alloc(if_bind, host, port, &psctx->tcp.localaddr, &sin_size);
+        sock = vpn_tcp_alloc(if_bind, addr->host, addr->port, addr->ifname, &psctx->tcp.localaddr, &sin_size);
         if (sock < 0) {
             APP_ERROR("Failed to create tcp socket\n");
+            free(psctx);
             return NULL;
         }
     } else {
-        //sock = vpn_tcp_alloc(if_bind, host, port, &psctx->tcp.addr, &sin_size);
+        //sock = vpn_tcp_alloc(if_bind, addr->host, addr->port, addr->ifname, &psctx->tcp.addr, &sin_size);
         sock = -1;
     }
 
@@ -419,9 +422,7 @@ struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, cons
     psctx->tcp.read_buffer_size = 0;
     psctx->tcp.read_pos = 0;
     psctx->tcp.read_size = 0;
-    strcpy(psctx->tcp.local_addr.host, host);
-    strcpy(psctx->tcp.local_addr.port, port);
-    psctx->tcp.local_addr.if_tcp = 1;
+    memcpy(&psctx->tcp.local_addr, addr, sizeof(struct switch_addr_t));
     list_add(&psctx->list, &smb->head.list);
     return psctx;
 }
@@ -710,11 +711,16 @@ int switch_read(struct switch_ctx_t *psctx, void *buff, int len, struct switch_m
                 }
                 psctx->tcp.read_pos += rlen;
                 if (psctx->tcp.read_pos >= packet_size + 2) {
-                    memcpy(buff, &psctx->tcp.read_buffer[2], packet_size);
+                    int mlen = (packet_size <= len) ? packet_size : len;
+                    if (packet_size != mlen) {
+                        APP_WARN("truncated incoming packet (original: %d bytes, stored: %d bytes)\n", packet_size, mlen);
+                    }
+
+                    memcpy(buff, &psctx->tcp.read_buffer[2], mlen);
 
                     psctx->tcp.read_pos -= (packet_size + 2);
                     memmove(&psctx->tcp.read_buffer[0], &psctx->tcp.read_buffer[packet_size + 2], psctx->tcp.read_pos);
-                    return packet_size;
+                    return mlen;
                 }
             }
 
@@ -861,7 +867,7 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
     if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
         dlen = switch_read_decode(buff2, buff1, rlen);
         if(dlen < 0) {
-            APP_WARN("decrypt error, sock = %d, len = %d\n", ctx->src_pctx->sock, rlen);
+            APP_WARN("invalid packet detected (socket: %s, len: %d)\n", ctx->src_pctx->sock, rlen);
             return dlen;
         }
         ctx->pbuf = buff2;
@@ -871,7 +877,7 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
     } else if (SWITCH_TAP == ctx->src_pctx->type) {
         dlen = switch_read_encode(buff2, buff1, rlen);
         if(dlen < 0) {
-            APP_WARN("encrypt error, sock = %d, len = %d\n", ctx->src_pctx->sock, rlen);
+            APP_WARN("encrypt error (socket: %s, len: %d)\n", ctx->src_pctx->sock, rlen);
             return dlen;
         }
         ctx->pbuf = buff1;
@@ -1009,9 +1015,9 @@ int switch_run(struct switch_args_t *args)
     for (int i = 0; i < args->local_count; i++) {
         struct switch_ctx_t *rctx = NULL;
         if (args->local_addr[i].if_tcp) {
-            rctx = switch_add_tcp(&smb, 1, args->local_addr[i].host, args->local_addr[i].port);
+            rctx = switch_add_tcp(&smb, 1, &args->local_addr[i]);
         } else {
-            rctx = switch_add_udp(&smb, 1, args->local_addr[i].host, args->local_addr[i].port);
+            rctx = switch_add_udp(&smb, 1, &args->local_addr[i]);
         }
         if (!rctx) {
             APP_ERROR("Failed to create local socket\n");
@@ -1023,9 +1029,9 @@ int switch_run(struct switch_args_t *args)
     for (int i = 0; i < args->server_count; i++) {
         struct switch_ctx_t *rctx = NULL;
         if (args->server_addr[i].if_tcp) {
-            rctx = switch_add_tcp(&smb, 0, args->server_addr[i].host, args->server_addr[i].port);
+            rctx = switch_add_tcp(&smb, 0, &args->server_addr[i]);
         } else {
-            rctx = switch_add_udp(&smb, 0, args->server_addr[i].host, args->server_addr[i].port);
+            rctx = switch_add_udp(&smb, 0, &args->server_addr[i]);
         }
         if (!rctx) {
             APP_ERROR("Failed to create remote socket\n");
@@ -1126,7 +1132,7 @@ int switch_run(struct switch_args_t *args)
                 }
 
                 if(rlen < 20) {
-                    APP_WARN("recv length error\n");
+                    APP_WARN("invalid packet size - received %d bytes (minimum threshold: %d)\n", rlen, 20);
                     continue;
                 }
 
@@ -1137,12 +1143,12 @@ int switch_run(struct switch_args_t *args)
                 uint8_t version = iph->version;
 
                 if (version != 4) {
-                    APP_DEBUG("verssion = %u error\n", version);
+                    APP_DEBUG("invalid packet type - expected ipv4, received type %d\n", version);
                     continue;
                 }
 
                 if (switch_in_cksum((uint16_t *)iph, iph->ihl * 4)) {
-                    APP_WARN("recv cksum error\n");
+                    APP_WARN("checksum validation failed\n");
                     continue;
                 }
 
