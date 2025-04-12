@@ -782,9 +782,9 @@ fail_reconnect:
 
 int switch_address_cmp(struct switch_ctx_t *ctxa, struct switch_ctx_t *ctxb)
 {
-    if (SWITCH_UDP == ctxa->type && SWITCH_UDP == ctxb->type)
+    if (SWITCH_UDP == ctxa->type && SWITCH_UDP == ctxb->type && ctxa->sock == ctxb->sock)
         return memcmp(&ctxa->udp.addr, &ctxb->udp.addr, sizeof(struct sockaddr_storage));
-    if (SWITCH_TCP == ctxa->type && SWITCH_TCP == ctxb->type)
+    if (SWITCH_TCP == ctxa->type && SWITCH_TCP == ctxb->type && ctxa->sock == ctxb->sock)
         return memcmp(&ctxa->tcp.addr, &ctxb->tcp.addr, sizeof(struct sockaddr_storage));
 
     return -1;

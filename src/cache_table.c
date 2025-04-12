@@ -291,8 +291,6 @@ void cache_route_iter(struct cache_router_t *rt,
     struct cache_router_t *s, *tmp;
 
     HASH_ITER(hh, *rt->table, s, tmp) {
-        if (s->router_mac == s->dest_router)
-            continue;
         call_user_fun(rt, s, p);
     }
 }

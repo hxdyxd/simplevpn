@@ -233,7 +233,6 @@ int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct
         rt.ctx = ctx->src_pctx;
         //memcpy(&rt.ctx, ctx->src_pctx, sizeof(rt.ctx));
         memcpy(&src_rt, &rt, sizeof(src_rt));
-        cache_router_add(&rt);
         switch_rip_add_resp_item(&rt, rip);
 
         memset(new_rip, 0, sizeof(struct switch_rip_t));
@@ -264,7 +263,6 @@ int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct
         rt.table = ppam->table;
         rt.ctx = ctx->src_pctx;
         //memcpy(&rt.ctx, ctx->src_pctx, sizeof(rt.ctx));
-        cache_router_add(&rt);
         switch_rip_add_resp_item(&rt, rip);
 
         return 0;
