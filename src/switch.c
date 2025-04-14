@@ -797,6 +797,10 @@ int switch_read_decode(uint8_t *out, uint8_t *in, int rlen)
     in += sizeof(struct switch_pack_t);
     rlen -= sizeof(struct switch_pack_t);
 
+    if (rlen <= 0) {
+        return -1;
+    }
+
 #ifdef USE_CRYPTO
     if (crypto_is_enabled()) {
         dlen = crypto_decrypt(out, in, rlen);
@@ -808,6 +812,10 @@ int switch_read_decode(uint8_t *out, uint8_t *in, int rlen)
     {
         memcpy(out, in, rlen);
         dlen = rlen;
+    }
+
+    if (dlen <= 0) {
+        return -1;
     }
 
     struct iphdr *iph = (struct iphdr *)out;
