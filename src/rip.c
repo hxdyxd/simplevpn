@@ -136,10 +136,10 @@ void switch_rip_add_resp_item(struct cache_router_t *rt, struct switch_rip_t *ri
     }
 }
 
-int switch_send_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct cache_router_t *ppam)
+int switch_send_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct switch_main_t *psmb)
 {
-    int dlen = -1;
     int new_len = 0;
+    struct cache_router_t *ppam = &psmb->param;
     struct iphdr *iph = (struct iphdr *)buff1;
     struct switch_rip_t *new_rip = (struct switch_rip_t *)((uint8_t *)iph + sizeof(struct iphdr));
 
@@ -168,31 +168,22 @@ int switch_send_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct ca
     //Big Endian
     new_rip->len = htons(new_rip->len);
 
-    if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(buff2, buff1, new_len);
-        if(dlen < 0) {
-            APP_WARN("[heart] encode error\n");
-            return dlen;
-        }
-        ctx->pbuf = buff1;
-        ctx->cbuf = buff2;
-        ctx->plen = new_len;
-        ctx->clen = dlen;
-    } else if (SWITCH_TAP == ctx->src_pctx->type) {
-        ctx->clen = ctx->plen = new_len;
-        ctx->cbuf = ctx->pbuf = buff1;
-    } else {
-        return -1;
-    }
-
     ctx->type = 'h';
+    ctx->pbuf = buff1;
+    ctx->plen = new_len;
+    ctx->cbuf = buff2;
+    ctx->clen = switch_add_header(buff2, buff1, new_len, psmb);
+    if (ctx->clen < 0) {
+        APP_WARN("[heart] add header error\n");
+        return ctx->clen;
+    }
     send_to_self(ctx);
     return ctx->plen;
 }
 
-int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct cache_router_t *ppam)
+int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct switch_main_t *psmb)
 {
-    int dlen = -1;
+    struct cache_router_t *ppam = &psmb->param;
     uint8_t *in_buff = ctx->pbuf;
     uint8_t *new_buff = ctx->cbuf;
     int new_len = 0;
@@ -271,21 +262,15 @@ int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct
         return -1;
     }
 
-    if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(in_buff, new_buff, new_len);
-        if(dlen < 0) {
-            APP_WARN("[heart] encode error\n");
-            return dlen;
-        }
-        ctx->pbuf = new_buff;
-        ctx->cbuf = in_buff;
-        ctx->plen = new_len;
-        ctx->clen = dlen;
-    } else {
-        return -1;
-    }
-
     ctx->type = 'h';
+    ctx->pbuf = new_buff;
+    ctx->plen = new_len;
+    ctx->cbuf = in_buff;
+    ctx->clen = switch_add_header(in_buff, new_buff, new_len, psmb);
+    if (ctx->clen < 0) {
+        APP_WARN("[heart] add header error\n");
+        return ctx->clen;
+    }
     send_to_self(ctx);
     return 0;
 }

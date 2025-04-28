@@ -122,6 +122,8 @@ int switch_router_dump(struct cache_router_t *s, char *msg)
 {
     char sbuff[128];
     char tbuff[128];
+    const char *tx_bytes_s = "";
+    uint32_t tx_bytes = 0;
     memset(sbuff, 0, sizeof(sbuff));
     memset(tbuff, 0, sizeof(sbuff));
 
@@ -131,8 +133,18 @@ int switch_router_dump(struct cache_router_t *s, char *msg)
         strncpy(sbuff, "none", sizeof(sbuff));
     switch_dump_table__(s, "", tbuff, sizeof(tbuff));
 
-    APP_INFO("%s %s %s tx=%u\n",
-             msg, tbuff, sbuff, s->tx_bytes);
+    tx_bytes = s->tx_bytes;
+    if (tx_bytes >= 1024) {
+        tx_bytes /= 1024;
+        tx_bytes_s = "KB";
+    }
+    if (tx_bytes >= 1024) {
+        tx_bytes /= 1024;
+        tx_bytes_s = "MB";
+    }
+
+    APP_INFO("%s %s %s tx=%u%s\n",
+             msg, tbuff, sbuff, tx_bytes, tx_bytes_s);
     return 0;
 }
 
@@ -234,7 +246,7 @@ struct cache_router_t *cache_router_search(struct cache_router_t *rt, uint32_t d
     for (i = 0; i < 32; i++) {
         dest_prefix = dest_router & (0xffffffff << i);
         HASH_FIND_INT(*rt->table, &dest_prefix, s);
-        if (s && 32 - i <= s->prefix_length) {
+        if (s && 32 - i == s->prefix_length) {
             break;
         }
     }

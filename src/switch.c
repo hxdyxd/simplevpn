@@ -19,25 +19,25 @@
  * along with simplevpn; see the file COPYING. If not, see
  * <http://www.gnu.org/licenses/>.
  */
-#include <netinet/in.h>
-#include <net/if.h>
-#include <linux/if_tun.h>
-#include <linux/ip.h>
-#include <linux/icmp.h>
-#include <sys/types.h>
+//#define _LINUX_IN6_H
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
-
+#include <sys/types.h>
 #include <sys/select.h> 
 #include <sys/ioctl.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
-
 #include <sys/time.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <linux/if_tun.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+#include <linux/icmp.h>
 #include "app_debug.h"
 #include "netclock.h"
 #include "simplevpn.h"
@@ -57,8 +57,52 @@
 struct switch_pack_t {
     uint8_t hop_limit;
     uint8_t recv[3];
+    uint32_t daddr;
+    uint32_t saddr;
 };
 
+int switch_read_encode(uint8_t *out, uint8_t *in, int rlen)
+{
+    int dlen = -1;
+
+#ifdef USE_CRYPTO
+    if (crypto_is_enabled()) {
+        dlen = crypto_encrypt(out, in, rlen);
+        if(dlen < 0) {
+            return dlen;
+        }
+    } else
+#endif
+    {
+        memcpy(out, in, rlen);
+        dlen = rlen;
+    }
+
+    return dlen;
+}
+
+int switch_read_decode(uint8_t *out, uint8_t *in, int rlen)
+{
+    int dlen = -1;
+    if (rlen <= 0) {
+        return -1;
+    }
+
+#ifdef USE_CRYPTO
+    if (crypto_is_enabled()) {
+        dlen = crypto_decrypt(out, in, rlen);
+        if(dlen < 0) {
+            return dlen;
+        }
+    } else
+#endif
+    {
+        memcpy(out, in, rlen);
+        dlen = rlen;
+    }
+
+    return dlen;
+}
 
 static int switch_write(struct switch_ctx_t *psctx, UDP_CTX *ctx_p)
 {
@@ -148,13 +192,31 @@ static int switch_write(struct switch_ctx_t *psctx, UDP_CTX *ctx_p)
     return wlen;
 }
 
+int switch_write_both(struct switch_ctx_t *ctx, UDP_CTX *ctx_p)
+{
+    int dlen = 0;
+    uint8_t encbuff[4096];
+
+    if (SWITCH_UDP == ctx->type || SWITCH_TCP == ctx->type) {
+        dlen = switch_read_encode(encbuff, ctx_p->cbuf, ctx_p->clen);
+        if(dlen < 0) {
+            APP_WARN("encode error\n");
+            return dlen;
+        }
+        memcpy(ctx_p->cbuf, encbuff, dlen);
+        ctx_p->clen = dlen;
+    }
+
+    return switch_write(ctx, ctx_p);
+}
+
 void send_to_self(UDP_CTX *ctx_p)
 {
     if (DEBUG_INFO) {
         switch_dump_send_router(ctx_p->src_pctx, NULL, "[self]");
     }
 
-    int r = switch_write(ctx_p->src_pctx, ctx_p);
+    int r = switch_write_both(ctx_p->src_pctx, ctx_p);
     if (r < 0) {
         return;
     }
@@ -164,16 +226,11 @@ static void send_to_target_router(const struct cache_router_t *rt, struct cache_
 {
     UDP_CTX *ctx_p = (UDP_CTX *)p;
 
-    if (ctx_p->saddr == s->dest_router) {
-        APP_DEBUG("[%c]send udp to self!\n", ctx_p->type);
-        return;
-    }
-
     if (TRACE_INFO) {
         switch_dump_send_router(ctx_p->src_pctx, s, "[forward]");
     }
 
-    int r = switch_write(s->ctx, ctx_p);
+    int r = switch_write_both(s->ctx, ctx_p);
     if (r < 0) {
         return;
     }
@@ -181,11 +238,10 @@ static void send_to_target_router(const struct cache_router_t *rt, struct cache_
     s->tx_pks++;
 }
 
-static int send_icmp_packet(UDP_CTX *ctx, struct cache_router_t *ppam, uint8_t type, uint8_t code)
+static int send_icmp_packet(UDP_CTX *ctx, struct switch_main_t *psmb, uint8_t type, uint8_t code)
 {
     struct icmphdr *icmph = (struct icmphdr *)((uint8_t *)ctx->pbuf - sizeof(struct icmphdr));
     struct iphdr *iph = (struct iphdr *)((uint8_t *)icmph - sizeof(struct iphdr));
-    int dlen = 0;
     uint16_t ip_len;
 
     ip_len = ctx->plen + sizeof(struct icmphdr) + sizeof(struct iphdr);
@@ -196,7 +252,7 @@ static int send_icmp_packet(UDP_CTX *ctx, struct cache_router_t *ppam, uint8_t t
     iph->tot_len = htons(ip_len);
     iph->ttl = 0x40;
     iph->daddr = htonl(ctx->saddr);
-    iph->saddr = htonl(ppam->router_mac);
+    iph->saddr = htonl(psmb->param.router_mac);
     iph->protocol = 1;
     iph->check = switch_in_cksum((uint16_t *)iph, iph->ihl * 4); //-O3 Abnormal
 
@@ -206,53 +262,58 @@ static int send_icmp_packet(UDP_CTX *ctx, struct cache_router_t *ppam, uint8_t t
     icmph->checksum = 0;
     icmph->checksum = switch_in_cksum((uint16_t *)icmph, ctx->plen + sizeof(struct icmphdr)); //-O3 Abnormal
 
-    if (SWITCH_UDP == ctx->src_pctx->type || SWITCH_TCP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(ctx->cbuf, (void *)iph, ip_len);
-        if(dlen < 0) {
-            APP_WARN("encode error\n");
-            return dlen;
-        }
-        ctx->pbuf = iph;
-        ctx->cbuf = ctx->cbuf;
-        ctx->plen = ip_len;
-        ctx->clen = dlen;
-    } else if (SWITCH_TAP == ctx->src_pctx->type) {
-        ctx->clen = ctx->plen = ip_len;
-        ctx->cbuf = ctx->pbuf = iph;
-    } else {
-        return -1;
-    }
-
     ctx->type = 'i';
+    ctx->pbuf = iph;
+    ctx->plen = ip_len;
+    ctx->cbuf = ctx->cbuf;
+    ctx->clen = switch_add_header(ctx->cbuf, iph, ip_len, psmb);
+    if (ctx->clen < 0) {
+        APP_WARN("[heart] add header error\n");
+        return ctx->clen;
+    }
     send_to_self(ctx);
     APP_DEBUG("write icmp %d %d = %d\n", type, code, ip_len);
     return 0;
 }
 
-static void send_to_router(UDP_CTX *ctx_p, struct cache_router_t *ppam)
+static void send_to_router(UDP_CTX *ctx_p, struct switch_main_t *smb)
 {
     struct cache_router_t src_rt;
-    src_rt.dest_router = ppam->router_mac;
-    src_rt.table = ppam->table;
-    struct cache_router_t *target = NULL;
-    target = cache_router_search(&src_rt, ctx_p->daddr);
-    if (!target && ctx_p->default_addr) {
-        target = cache_router_search(&src_rt, ctx_p->default_addr);
+    struct switch_pack_t *head = (struct switch_pack_t *)ctx_p->cbuf;
+    ctx_p->daddr = ntohl(head->daddr);
+    ctx_p->saddr = ntohl(head->saddr);
+
+    src_rt.dest_router = smb->param.router_mac;
+    src_rt.table = smb->param.table;
+    struct cache_router_t *target = cache_router_search(&src_rt, ctx_p->daddr);
+    if (!target && ctx_p->saddr == smb->param.router_mac) {
+        if (smb->default_mac) {
+            ctx_p->daddr = smb->default_mac;
+        }
+        target = cache_router_search(&src_rt, ctx_p->daddr);
+        if (target) {
+            head->daddr = htonl(ctx_p->daddr);
+        }
     }
     if (!target || target->metric >= CACHE_ROUTE_METRIC_MAX) {
         APP_DEBUG("can't found target %08x\n", ctx_p->daddr);
-        send_icmp_packet(ctx_p, ppam, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH);
+        send_icmp_packet(ctx_p, smb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH);
         return;
     }
     if (!target->ctx || !target->ctx->type) {
         APP_WARN("can't found target device  %08x\n", ctx_p->daddr);
-        send_icmp_packet(ctx_p, ppam, ICMP_DEST_UNREACH, ICMP_PROT_UNREACH);
+        send_icmp_packet(ctx_p, smb, ICMP_DEST_UNREACH, ICMP_PROT_UNREACH);
         return;
     }
 
-    if (ctx_p->daddr != ppam->router_mac && ((uint8_t *)(ctx_p->cbuf))[0] == 0) {
-        APP_WARN("ttl is zero\n");
-        send_icmp_packet(ctx_p, ppam, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
+    if (ctx_p->daddr != smb->param.router_mac && head->hop_limit == 0) {
+        APP_WARN("ttl is zero %x -> %x\n", ctx_p->saddr, ctx_p->daddr);
+        send_icmp_packet(ctx_p, smb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
+        return;
+    }
+
+    if (ctx_p->saddr == target->dest_router) {
+        APP_WARN("[%c]send udp to self!\n", ctx_p->type);
         return;
     }
 
@@ -485,7 +546,7 @@ struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct s
     return psctx;
 }
 
-struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16_t mtu)
+struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, const char *ifname, uint16_t mtu)
 {
     struct ifreq ifr;
     int fd, err;
@@ -507,6 +568,7 @@ struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16
     }
 
     memset(&ifr, 0, sizeof(ifr));
+    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", ifname);
     ifr.ifr_flags = flags;
 
     if ((err = ioctl(fd, TUNSETIFF, (void *) &ifr)) < 0) {
@@ -790,78 +852,68 @@ int switch_address_cmp(struct switch_ctx_t *ctxa, struct switch_ctx_t *ctxb)
     return -1;
 }
 
-int switch_read_decode(uint8_t *out, uint8_t *in, int rlen)
+int switch_update_header(void *outbuff, void *inbuff, int len)
 {
-    int dlen = -1;
-    struct switch_pack_t *head = (struct switch_pack_t *)in;
-    in += sizeof(struct switch_pack_t);
-    rlen -= sizeof(struct switch_pack_t);
+    struct switch_pack_t *head = (struct switch_pack_t *)inbuff;
+    struct iphdr *iph = (struct iphdr *)((uint8_t *)inbuff + sizeof(struct switch_pack_t));
+    struct ipv6hdr *ip6h = (struct ipv6hdr *)((uint8_t *)inbuff + sizeof(struct switch_pack_t));
 
-    if (rlen <= 0) {
-        return -1;
-    }
-
-#ifdef USE_CRYPTO
-    if (crypto_is_enabled()) {
-        dlen = crypto_decrypt(out, in, rlen);
-        if(dlen < 0) {
-            return dlen;
-        }
-    } else
-#endif
-    {
-        memcpy(out, in, rlen);
-        dlen = rlen;
-    }
-
-    if (dlen <= 0) {
-        return -1;
-    }
-
-    struct iphdr *iph = (struct iphdr *)out;
     if (4 == iph->version) {
-        if (head->hop_limit < iph->ttl) {
-            uint32_t check = iph->check;
-            check += htons((iph->ttl - head->hop_limit) << 8);
-            iph->check = (uint16_t)(check + (check >= 0xFFFF));
-            iph->ttl = head->hop_limit;
-        }
         if (!iph->ttl) {
             APP_WARN("ttl is zero\n");
             return -1;
         }
+        head->hop_limit = iph->ttl - 1;
+        uint32_t check = iph->check;
+        check += htons((iph->ttl - head->hop_limit) << 8);
+        iph->check = (uint16_t)(check + (check >= 0xFFFF));
+        iph->ttl = head->hop_limit;
+    } else if (6 == ip6h->version) {
+        if (!ip6h->hop_limit) {
+            APP_WARN("hop_limit is zero\n");
+            return -1;
+        }
+        head->hop_limit = ip6h->hop_limit - 1;
+        ip6h->hop_limit = head->hop_limit;
+    } else {
+        APP_WARN("invalid packet type - expected ipv4 or ipv6, received type %u\n", iph->version);
+        return -1;
     }
 
-    head->hop_limit--;
-
-    return dlen;
+    memcpy(outbuff, (uint8_t *)inbuff + sizeof(struct switch_pack_t), len - sizeof(struct switch_pack_t));
+    return len - sizeof(struct switch_pack_t);
 }
 
-int switch_read_encode(uint8_t *out, uint8_t *in, int rlen)
+int switch_add_header(void *outbuff, void *inbuff, int len, struct switch_main_t *psmb)
 {
-    int dlen = -1;
+    struct switch_pack_t *head = (struct switch_pack_t *)outbuff;
+    struct iphdr *iph = (struct iphdr *)inbuff;
+    struct ipv6hdr *ip6h = (struct ipv6hdr *)inbuff;
 
-    struct iphdr *iph = (struct iphdr *)in;
-    struct switch_pack_t *head = (struct switch_pack_t *)out;
-    out += sizeof(struct switch_pack_t);
     memset(head, 0, sizeof(struct switch_pack_t));
     if (4 == iph->version) {
+        if (!iph->ttl) {
+            APP_WARN("ttl is zero\n");
+            return -1;
+        }
         head->hop_limit = iph->ttl;
+        head->daddr = iph->daddr;
+        head->saddr = htonl(psmb->param.router_mac);
+    } else if (6 == ip6h->version) {
+        if (!ip6h->hop_limit) {
+            APP_WARN("hop_limit is zero\n");
+            return -1;
+        }
+        head->hop_limit = ip6h->hop_limit;
+        head->daddr = htonl(psmb->default_mac);
+        head->saddr = htonl(psmb->param.router_mac);
+    } else {
+        APP_WARN("invalid packet type - expected ipv4 or ipv6, received type %u\n", iph->version);
+        return -1;
     }
 
-#ifdef USE_CRYPTO
-    if (crypto_is_enabled()) {
-        dlen = crypto_encrypt(out, in, rlen);
-        if(dlen < 0) {
-            return dlen;
-        }
-    } else
-#endif
-    {
-        memcpy(out, in, rlen);
-        dlen = rlen;
-    }
-    return dlen + sizeof(struct switch_pack_t);
+    memcpy((uint8_t *)outbuff + sizeof(struct switch_pack_t), inbuff, len);
+    return len + sizeof(struct switch_pack_t);
 }
 
 int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct switch_main_t *psmb)
@@ -878,20 +930,21 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
             APP_WARN("invalid packet detected (socket: %d, len: %d)\n", ctx->src_pctx->sock, rlen);
             return dlen;
         }
-        ctx->pbuf = buff2;
-        ctx->cbuf = buff1;
-        ctx->plen = dlen;
-        ctx->clen = rlen;
-    } else if (SWITCH_TAP == ctx->src_pctx->type) {
-        dlen = switch_read_encode(buff2, buff1, rlen);
-        if(dlen < 0) {
-            APP_WARN("encrypt error (socket: %d, len: %d)\n", ctx->src_pctx->sock, rlen);
-            return dlen;
-        }
-        ctx->pbuf = buff1;
         ctx->cbuf = buff2;
-        ctx->plen = rlen;
         ctx->clen = dlen;
+        ctx->pbuf = buff1;
+        ctx->plen = switch_update_header(buff1, buff2, dlen);
+        if (ctx->clen < 0) {
+            return -1;
+        }
+    } else if (SWITCH_TAP == ctx->src_pctx->type) {
+        ctx->pbuf = buff1;
+        ctx->plen = rlen;
+        ctx->cbuf = buff2;
+        ctx->clen = switch_add_header(buff2, buff1, rlen, psmb);
+        if (ctx->clen < 0) {
+            return -1;
+        }
     } else {
         return -1;
     }
@@ -938,7 +991,7 @@ int switch_send_heart_timer(struct switch_main_t *psmb, void *in, void *out, int
             }
         }
 
-        switch_send_heart(&ctx, in, out, len, &psmb->param);
+        switch_send_heart(&ctx, in, out, len, psmb);
     }
     return 0;
 }
@@ -951,7 +1004,6 @@ int switch_run(struct switch_args_t *args)
     int sctx_count = 0;
     int ret = -1;
     struct cache_router_t *router_all = NULL;
-    uint32_t default_mac = 0;
     struct switch_main_t smb;
     struct switch_ctx_t *sctx, *stmp;
 
@@ -988,7 +1040,7 @@ int switch_run(struct switch_args_t *args)
             APP_ERROR("inet_aton error\n");
             goto exit;
         }
-        default_mac = ntohl(ipaddr.s_addr);
+        smb.default_mac = ntohl(ipaddr.s_addr);
     }
 
     if (args->if_local_network) {
@@ -1057,7 +1109,7 @@ int switch_run(struct switch_args_t *args)
              *        IFF_TAP   - TAP device
              *        IFF_NO_PI - Do not provide packet information
              */
-            rctx = switch_add_tap(&smb, IFF_TUN | IFF_NO_PI, args->mtu);
+            rctx = switch_add_tap(&smb, IFF_TUN | IFF_NO_PI, args->ifname, args->mtu);
             if (!rctx) {
                 APP_ERROR("Failed to allocating tun/tap interface\n");
                 goto exit;
@@ -1147,29 +1199,22 @@ int switch_run(struct switch_args_t *args)
                 /* switch or client todo... */
                 struct iphdr *iph = (struct iphdr *)ctx.pbuf;
                 uint32_t daddr = ntohl(iph->daddr);
-                uint32_t saddr = ntohl(iph->saddr);
                 uint8_t version = iph->version;
 
-                if (version != 4) {
-                    APP_DEBUG("invalid packet type - expected ipv4, received type %u\n", version);
-                    continue;
-                }
+                if (version == 4) {
+                    if (switch_in_cksum((uint16_t *)iph, iph->ihl * 4)) {
+                        APP_WARN("checksum validation failed\n");
+                        continue;
+                    }
 
-                if (switch_in_cksum((uint16_t *)iph, iph->ihl * 4)) {
-                    APP_WARN("checksum validation failed\n");
-                    continue;
-                }
-
-                if (daddr == 0xffffffff) {
-                    switch_process_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &smb.param);
-                    continue;
+                    if (daddr == 0xffffffff) {
+                        switch_process_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &smb);
+                        continue;
+                    }
                 }
 
                 ctx.type = 'n';
-                ctx.saddr = saddr;
-                ctx.daddr = daddr;
-                ctx.default_addr = default_mac;
-                send_to_router(&ctx, &smb.param);
+                send_to_router(&ctx, &smb);
             }
 
             if (FD_ISSET(cur_fd, &writeset)) {

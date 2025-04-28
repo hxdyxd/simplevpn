@@ -146,11 +146,13 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port, const char *i
     }
 
     if (if_bind) {
+#ifdef SO_REUSEPORT
         int opt = 1;
         r = setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
         if (r < 0) {
             APP_WARN("setsockopt(SO_REUSEPORT): %s\n", strerror(errno));
         }
+#endif
 
         r = bind(sock, res->ai_addr, res->ai_addrlen);
         if (r < 0) {

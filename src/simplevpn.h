@@ -27,6 +27,7 @@
 #include "list.h"
 #include "uthash.h"
 
+#define VERSION "0.1.3"
 #define DEFAULT_PASSWORD      ""
 #define MODE_SWITCH      0
 #define MODE_CLIENT      1
@@ -139,6 +140,7 @@ struct cache_router_t {
 struct switch_main_t {
     struct switch_ctx_t   head;
     struct cache_router_t param;
+    uint32_t default_mac;
     uint32_t current_time;
 };
 
@@ -160,6 +162,7 @@ struct switch_args_t {
     const char *pid_file;
     const char *log_file;
     const char *password;
+    const char *ifname;
     uint16_t mtu;
     int running;
 };
@@ -170,10 +173,10 @@ int switch_reconnect_tcp(struct switch_ctx_t *ctx);
 struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct switch_ctx_t *ctx);
 struct switch_ctx_t *switch_add_tcp(struct switch_main_t *smb, int if_bind, struct switch_addr_t *addr);
 struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, struct switch_addr_t *addr);
-struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, uint16_t mtu);
+struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, const char *ifname, uint16_t mtu);
 
 //switch
-int switch_read_encode(uint8_t *out, uint8_t *in, int rlen);
+int switch_add_header(void *outbuff, void *inbuff, int len, struct switch_main_t *psmb);
 int switch_address_cmp(struct switch_ctx_t *ctxa, struct switch_ctx_t *ctxb);
 
 //rip

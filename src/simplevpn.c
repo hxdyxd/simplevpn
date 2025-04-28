@@ -30,7 +30,6 @@
 #include "crypto.h"
 #endif
 
-#define VERSION "0.1.2"
 #define DEBUG_INFO     1
 #define TIME_DEBUG    15
 
@@ -54,7 +53,7 @@ void usage(void)
     PRINTF(
         "       -R <remote_addr>           Your remote server tcp address.\n");
     PRINTF(
-        "       [-t]                       Create tap device.\n");
+        "       -t <tun name>              Create tun device.\n");
     PRINTF(
         "       -k <password>              Password of your remote server.\n");
     PRINTF(
@@ -94,7 +93,7 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
     args->pid_file = "/var/run/simplevpn.pid";
     args->log_file = "/var/run/simplevpn.log";
 
-    while((ch = getopt(argc, argv, "l:r:L:R:p:n:g:k:e:d:s:tvh")) != -1) {
+    while((ch = getopt(argc, argv, "l:r:L:R:p:n:g:k:e:d:s:t:vh")) != -1) {
         switch(ch) {
         case 'L':
             args->local_addr[args->local_count].if_tcp = 1;
@@ -160,6 +159,7 @@ int args_parse(struct switch_args_t *args, int argc, char **argv)
                 log_level = log_never;
             break;
         case 't':
+            args->ifname = strdup(optarg);
             args->has_tap = 1;
             break;
         case 'd':
