@@ -320,6 +320,32 @@ static void send_to_router(UDP_CTX *ctx_p, struct switch_main_t *smb)
     send_to_target_router(&src_rt, target, ctx_p);
 }
 
+int switch_rebind_udp(struct switch_ctx_t *ctx)
+{
+    int sock;
+    socklen_t sin_size;
+    struct switch_addr_t *addr = &ctx->udp.local_addr;
+
+    if (SWITCH_UDP != ctx->type) {
+        APP_ERROR("Failed to rebind udp\n");
+        return -1;
+    }
+
+    APP_INFO("udp rebind %s:%s [%s]\n", addr->host, addr->port, addr->ifname);
+
+    sock = vpn_udp_alloc(0, addr->host, addr->port, addr->ifname, &ctx->udp.addr, &sin_size);
+    if (sock < 0) {
+        APP_ERROR("Failed to create udp socket\n");
+        return -1;
+    }
+
+    if (ctx->udp.sock >= 0)
+        close(ctx->udp.sock);
+    ctx->msg_time = get_time_ms();
+    ctx->udp.sock = sock;
+    return sock;
+}
+
 struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, struct switch_addr_t *addr)
 {
     int sock;
@@ -349,6 +375,7 @@ struct switch_ctx_t *switch_add_udp(struct switch_main_t *smb, int if_bind, stru
     psctx->udp.sock = sock;
     psctx->udp.if_bind = if_bind;
     psctx->udp.if_local = 1;
+    memcpy(&psctx->udp.local_addr, addr, sizeof(struct switch_addr_t));
     list_add(&psctx->list, &smb->head.list);
     return psctx;
 }
@@ -983,10 +1010,20 @@ int switch_send_heart_timer(struct switch_main_t *psmb, void *in, void *out, int
             APP_DEBUG("[heart] send neigh probe heart -> %08x\n", rt->next_hop_router);
         } else {
             APP_INFO("[heart] send probe heart\n");
-            if (SWITCH_TCP == ctx.src_pctx->type && ctx.src_pctx->tcp.sock >= 0) {
-                if (ctx.src_pctx->msg_time && (cache_time - ctx.src_pctx->msg_time) > (3 * CACHE_ROUTE_UPDATE_TIME)) {
+
+            //check tcp
+            if (ctx.src_pctx->msg_time && (cache_time - ctx.src_pctx->msg_time) > (3 * CACHE_ROUTE_UPDATE_TIME)) {
+                if (SWITCH_TCP == ctx.src_pctx->type && ctx.src_pctx->tcp.sock >= 0) {
                     APP_WARN("[heart] lost heart, close tcp %d\n", ctx.src_pctx->tcp.sock);
                     switch_disconnect_tcp(ctx.src_pctx);
+                }
+            }
+
+            //check udp
+            if (ctx.src_pctx->msg_time && (cache_time - ctx.src_pctx->msg_time) > (6 * CACHE_ROUTE_UPDATE_TIME)) {
+                if (SWITCH_UDP == ctx.src_pctx->type) {
+                    APP_WARN("[heart] lost heart, rebind udp %d\n", ctx.src_pctx->tcp.sock);
+                    switch_rebind_udp(ctx.src_pctx);
                 }
             }
         }

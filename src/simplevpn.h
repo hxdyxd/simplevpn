@@ -89,6 +89,7 @@ struct switch_ctx_t {
             int if_local;
             struct sockaddr_storage localaddr;
             struct sockaddr_storage addr;
+            struct switch_addr_t local_addr;
         }udp;
         struct {
             int sock;
