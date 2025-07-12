@@ -33,6 +33,7 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port, const char *i
 int vpn_get_sockaddr(const char *host, const char *port,
                   struct sockaddr_storage *addr, socklen_t* addrlen);
 int vpn_udp_ntop(struct sockaddr_storage *src_addr, char *addr_buf, int len, const char **host, uint16_t *port);
+void vpn_convert_ipv6_to_sockaddr(struct sockaddr_storage *storage, const uint8_t *dest_v6, uint16_t port);
 int vpn_udp_sinsize(struct sockaddr_storage *src_addr);
 int vpn_sock_set_blocking(int sock, int if_block);
 int vpn_sock_set_keepalive(int sock, int enable, int time, int intvl, int probes);

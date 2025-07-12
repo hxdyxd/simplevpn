@@ -222,22 +222,6 @@ void send_to_self(UDP_CTX *ctx_p)
     }
 }
 
-static void send_to_target_router(const struct cache_router_t *rt, struct cache_router_t *s, void *p)
-{
-    UDP_CTX *ctx_p = (UDP_CTX *)p;
-
-    if (TRACE_INFO) {
-        switch_dump_send_router(ctx_p->src_pctx, s, "[forward]");
-    }
-
-    int r = switch_write_both(s->ctx, ctx_p);
-    if (r < 0) {
-        return;
-    }
-    s->tx_bytes += ctx_p->clen;
-    s->tx_pks++;
-}
-
 static int send_icmp_packet(UDP_CTX *ctx, struct switch_main_t *psmb, uint8_t type, uint8_t code)
 {
     struct icmphdr *icmph = (struct icmphdr *)((uint8_t *)ctx->pbuf - sizeof(struct icmphdr));
@@ -276,48 +260,79 @@ static int send_icmp_packet(UDP_CTX *ctx, struct switch_main_t *psmb, uint8_t ty
     return 0;
 }
 
+static void send_to_target_router(const struct cache_router_t *rt, struct cache_router_t *s, void *p)
+{
+    UDP_CTX *ctx_p = (UDP_CTX *)p;
+
+    if (TRACE_INFO) {
+        switch_dump_send_router(ctx_p->src_pctx, s, "[forward]");
+    }
+
+    int r = switch_write_both(s->ctx, ctx_p);
+    if (r < 0) {
+        return;
+    }
+    s->tx_bytes += ctx_p->clen;
+    s->tx_pks++;
+}
+
+static void send_to_router_item(const struct cache_router_t *rt, struct cache_router_t *target, void *p)
+{
+    UDP_CTX *ctx_p = (UDP_CTX *)p;
+    if ('b' != ctx_p->type) {
+        APP_WARN("[%c]send type fail %08x!\n", ctx_p->type, target->dest_router);
+        return;
+    }
+
+    //APP_WARN("[%c]send to %08x!\n", ctx_p->type, target->dest_router);
+    //send_to_target_router(rt, target, p);
+}
+
 static void send_to_router(UDP_CTX *ctx_p, struct switch_main_t *smb)
 {
-    struct cache_router_t src_rt;
     struct switch_pack_t *head = (struct switch_pack_t *)ctx_p->cbuf;
     ctx_p->daddr = ntohl(head->daddr);
     ctx_p->saddr = ntohl(head->saddr);
 
-    src_rt.dest_router = smb->param.router_mac;
-    src_rt.table = smb->param.table;
-    struct cache_router_t *target = cache_router_search(&src_rt, ctx_p->daddr);
+    if (0xffffffff == ctx_p->daddr) {
+        ctx_p->type = 'b';
+        cache_route_iter(&smb->param, send_to_router_item, ctx_p);
+        return;
+    }
+
+    struct cache_router_t *target = cache_router_search(&smb->param, ctx_p->daddr);
     if (!target && ctx_p->saddr == smb->param.router_mac) {
         if (smb->default_mac) {
             ctx_p->daddr = smb->default_mac;
         }
-        target = cache_router_search(&src_rt, ctx_p->daddr);
+        target = cache_router_search(&smb->param, ctx_p->daddr);
         if (target) {
             head->daddr = htonl(ctx_p->daddr);
         }
     }
     if (!target || target->metric >= CACHE_ROUTE_METRIC_MAX) {
-        APP_DEBUG("can't found target %08x\n", ctx_p->daddr);
+        APP_DEBUG("[%c]can't found target %08x\n", ctx_p->type, ctx_p->daddr);
         send_icmp_packet(ctx_p, smb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH);
         return;
     }
     if (!target->ctx || !target->ctx->type) {
-        APP_WARN("can't found target device  %08x\n", ctx_p->daddr);
+        APP_WARN("[%c]can't found target device  %08x\n", ctx_p->type, ctx_p->daddr);
         send_icmp_packet(ctx_p, smb, ICMP_DEST_UNREACH, ICMP_PROT_UNREACH);
         return;
     }
 
     if (ctx_p->daddr != smb->param.router_mac && head->hop_limit == 0) {
-        APP_WARN("ttl is zero %x -> %x\n", ctx_p->saddr, ctx_p->daddr);
+        APP_WARN("[%c]ttl is zero %08x -> %08x\n", ctx_p->type, ctx_p->saddr, ctx_p->daddr);
         send_icmp_packet(ctx_p, smb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
         return;
     }
 
     if (ctx_p->saddr == target->dest_router) {
-        APP_WARN("[%c]send udp to self!\n", ctx_p->type);
+        APP_WARN("[%c]send to self %08x!\n", ctx_p->type, target->dest_router);
         return;
     }
 
-    send_to_target_router(&src_rt, target, ctx_p);
+    send_to_target_router(&smb->param, target, ctx_p);
 }
 
 int switch_rebind_udp(struct switch_ctx_t *ctx)
@@ -879,11 +894,12 @@ int switch_address_cmp(struct switch_ctx_t *ctxa, struct switch_ctx_t *ctxb)
     return -1;
 }
 
-int switch_update_header(void *outbuff, void *inbuff, int len)
+int switch_update_header(void *outbuff, void *inbuff, int len, struct switch_main_t *psmb)
 {
     struct switch_pack_t *head = (struct switch_pack_t *)inbuff;
     struct iphdr *iph = (struct iphdr *)((uint8_t *)inbuff + sizeof(struct switch_pack_t));
     struct ipv6hdr *ip6h = (struct ipv6hdr *)((uint8_t *)inbuff + sizeof(struct switch_pack_t));
+    struct cache_v6_t v6rt;
 
     if (4 == iph->version) {
         if (!iph->ttl) {
@@ -902,6 +918,10 @@ int switch_update_header(void *outbuff, void *inbuff, int len)
         }
         head->hop_limit = ip6h->hop_limit - 1;
         ip6h->hop_limit = head->hop_limit;
+
+        v6rt.time = psmb->current_time;
+        v6rt.table = &psmb->v6table;
+        cache_v6_add(&v6rt, ip6h->saddr.s6_addr, ntohl(head->saddr));
     } else {
         APP_WARN("invalid packet type - expected ipv4 or ipv6, received type %u\n", iph->version);
         return -1;
@@ -916,6 +936,8 @@ int switch_add_header(void *outbuff, void *inbuff, int len, struct switch_main_t
     struct switch_pack_t *head = (struct switch_pack_t *)outbuff;
     struct iphdr *iph = (struct iphdr *)inbuff;
     struct ipv6hdr *ip6h = (struct ipv6hdr *)inbuff;
+    struct cache_v6_t *v6target = NULL;
+    struct cache_v6_t v6rt;
 
     memset(head, 0, sizeof(struct switch_pack_t));
     if (4 == iph->version) {
@@ -934,6 +956,28 @@ int switch_add_header(void *outbuff, void *inbuff, int len, struct switch_main_t
         head->hop_limit = ip6h->hop_limit;
         head->daddr = htonl(psmb->default_mac);
         head->saddr = htonl(psmb->param.router_mac);
+
+        v6rt.time = psmb->current_time;
+        v6rt.table = &psmb->v6table;
+        if (0xff == ip6h->daddr.s6_addr[0] && 0x02 == ip6h->daddr.s6_addr[1]) {
+            struct sockaddr_storage v6addr;
+            char addr_buff[INET6_ADDRSTRLEN];
+            const char *ip = "";
+            uint16_t port = 0;
+
+            vpn_convert_ipv6_to_sockaddr(&v6addr, ip6h->daddr.s6_addr, 0);
+            vpn_udp_ntop(&v6addr, addr_buff, sizeof(addr_buff), &ip, &port);
+            APP_WARN("send v6 to %s\n", ip);
+
+            //head->daddr = htonl(0xffffffff);
+        } else {
+            v6target = cache_v6_find(&v6rt, ip6h->daddr.s6_addr);
+            if (v6target) {
+                head->daddr = htonl(v6target->dest);
+            }
+        }
+
+        cache_v6_add(&v6rt, ip6h->saddr.s6_addr, psmb->param.router_mac);
     } else {
         APP_WARN("invalid packet type - expected ipv4 or ipv6, received type %u\n", iph->version);
         return -1;
@@ -960,7 +1004,7 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
         ctx->cbuf = buff2;
         ctx->clen = dlen;
         ctx->pbuf = buff1;
-        ctx->plen = switch_update_header(buff1, buff2, dlen);
+        ctx->plen = switch_update_header(buff1, buff2, dlen, psmb);
         if (ctx->clen < 0) {
             return -1;
         }
@@ -1041,11 +1085,13 @@ int switch_run(struct switch_args_t *args)
     int sctx_count = 0;
     int ret = -1;
     struct cache_router_t *router_all = NULL;
+    struct cache_v6_t v6rt;
     struct switch_main_t smb;
     struct switch_ctx_t *sctx, *stmp;
 
     INIT_LIST_HEAD(&smb.head.list);
     memset(&smb.param, 0, sizeof(struct cache_router_t));
+    smb.v6table = NULL;
 
     if (args->running) {
         APP_WARN("vpn is running\n");
@@ -1244,7 +1290,7 @@ int switch_run(struct switch_args_t *args)
                         continue;
                     }
 
-                    if (daddr == 0xffffffff) {
+                    if (0xffffffff == daddr && 0xff == iph->protocol) {
                         switch_process_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &smb);
                         continue;
                     }
@@ -1259,14 +1305,18 @@ int switch_run(struct switch_args_t *args)
             }
         }
 
-
         if (smb.current_time - last_route_time > CACHE_ROUTE_UPDATE_TIME) {
             last_route_time = smb.current_time;
-            APP_INFO("active count: router = %d, sock = %d\n", cache_router_count(&smb.param), sock_count);
+
+            v6rt.time = smb.current_time;
+            v6rt.table = &smb.v6table;
+            APP_INFO("active count: sock = %d, router = %d, router_v6 = %d\n",
+                     sock_count, cache_router_count(&smb.param), cache_v6_count(&v6rt));
             list_for_each_entry_safe(sctx, stmp, &smb.head.list, list) {
                 switch_dump_send_router(sctx, NULL, "sock_list:");
             }
             cache_route_printall(&smb.param);
+            cache_v6_printall(&v6rt);
         }
 
         if (smb.current_time - last_heart_time > CACHE_ROUTE_UPDATE_TIME) {
@@ -1287,6 +1337,9 @@ exit:
         close(cur_fd);
     }
     cache_router_delete_all(&smb.param);
+    v6rt.time = smb.current_time;
+    v6rt.table = &smb.v6table;
+    cache_v6_delete_all(&v6rt);
 
     args->running = 0;
     return 0;

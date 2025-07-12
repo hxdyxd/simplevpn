@@ -16,7 +16,8 @@ if(DEFINED CMAKE_TOOLCHAIN_FILE)
     message(STATUS "Using toolchain file: ${CMAKE_TOOLCHAIN_FILE}")
 endif()
 
-option(DISABLE_SODIUM "Disable libsodium dependency" OFF)
+option(DISABLE_SODIUM "Disable libsodium dependency" ON)
+option(DISABLE_WOLFSSL "Disable mbedtls dependency" OFF)
 
 # Base files
 set(BASE_SOURCES
@@ -36,6 +37,8 @@ set(MAIN_SOURCES
 
 set(HEADERS
     src/app_debug.h
+    src/blake2-impl.h
+    src/blake2.h
     src/cache_table.h
     src/crypto.h
     src/daemon.h
@@ -46,12 +49,22 @@ set(HEADERS
     src/simplevpn.h
     src/udp_alloc.h
     src/uthash.h
+    src/utils.h
 )
 
 if(NOT DISABLE_SODIUM)
-    list(APPEND  BASE_SOURCES src/crypto.c)
+    list(APPEND  BASE_SOURCES
+        src/crypto.c
+    )
     add_definitions(-DUSE_CRYPTO)
     message(STATUS "libsodium enabled")
+elseif(NOT DISABLE_WOLFSSL)
+    list(APPEND  BASE_SOURCES
+        src/blake2b-ref.c
+        src/crypto_wolfssl.c
+    )
+    add_definitions(-DUSE_CRYPTO)
+    message(STATUS "wolfSSL enabled")
 endif()
 
 set(PROJECT_STATIC_NAME "${PROJECT_NAME}_static")
@@ -140,6 +153,26 @@ if(NOT DISABLE_SODIUM)
     add_dependencies(${PROJECT_SHARED_NAME} libsodium)
     target_link_libraries(${PROJECT_SHARED_NAME} libsodium_shared)
     target_include_directories(${PROJECT_SHARED_NAME} PRIVATE "${SODIUM_INSTALL_DIR}/include")
+
+elseif(NOT DISABLE_WOLFSSL)
+    include(FetchContent)
+
+    FetchContent_Declare(
+        wolfssl
+        URL            "https://github.com/wolfSSL/wolfssl/archive/refs/tags/v5.8.0-stable.tar.gz"
+        URL_HASH       SHA256=f90f18c7f12913a0b351b1f4305e768697ea1380794df1f2984b9452ab0aeeaf
+    )
+
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(BUILD_SHARED_LIBS  OFF)
+
+    FetchContent_MakeAvailable(wolfssl)
+
+    add_dependencies(${PROJECT_STATIC_NAME} wolfssl)
+    target_link_libraries(${PROJECT_STATIC_NAME} wolfssl)
+
+    add_dependencies(${PROJECT_SHARED_NAME} wolfssl)
+    target_link_libraries(${PROJECT_SHARED_NAME} wolfssl)
 endif()
 
 # install

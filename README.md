@@ -32,8 +32,9 @@ simplevpn 0.1.2
 ## Build simplevpn
 
 ```
-sudo apt-get install git gcc make libsodium-dev pkg-config -y
+sudo apt-get install git gcc make cmake -y
 git clone --recursive https://github.com/hxdyxd/simplevpn.git
-cd simplevpn
+mkdir simplevpn/build && cd simplevpn/build
+cmake -DDISABLE_SODIUM=OFF .. && make -j4
 make -C ./src/ USE_CRYPTO=1
 ```

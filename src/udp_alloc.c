@@ -243,6 +243,16 @@ int vpn_udp_ntop(struct sockaddr_storage *src_addr, char *addr_buf, int len, con
     return 0;
 }
 
+void vpn_convert_ipv6_to_sockaddr(struct sockaddr_storage *storage, const uint8_t *dest_v6, uint16_t port)
+{
+    struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)storage;
+    memset(storage, 0, sizeof(struct sockaddr_storage));
+
+    addr6->sin6_family = AF_INET6;
+    addr6->sin6_port = htons(port);
+    memcpy(&addr6->sin6_addr, dest_v6, sizeof(addr6->sin6_addr));
+}
+
 int vpn_sock_set_blocking(int sock, int if_block)
 {
     int flags, r;

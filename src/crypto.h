@@ -28,8 +28,8 @@
 /* call once after start */
 int crypto_init(void);
 
-// TODO use a struct to hold context instead
-/* call when password changed */
+char * crypto_version(void);
+
 int crypto_set_password(const char *p, int plen);
 
 int crypto_encrypt(uint8_t *out_buf, uint8_t *in_buf, int in_len);
@@ -39,7 +39,5 @@ int crypto_decrypt(uint8_t *out_buf, uint8_t *in_buf, int in_len);
 int crypto_is_enabled(void);
 
 void crypto_gen_rand(uint8_t *out_buf, int in_len);
-
-int crypto_speed_test(int test_len);
 
 #endif

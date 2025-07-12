@@ -26,6 +26,7 @@
 #include "netclock.h"
 #include "rip.h"
 #include "cache_table.h"
+#include "utils.h"
 
 #define RIP_ITEM_MAX    25
 #define RIP_HEADER_LEN  8

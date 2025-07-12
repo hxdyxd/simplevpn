@@ -20,9 +20,14 @@
  * <http://www.gnu.org/licenses/>.
  */
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
+#include "crypto.h"
 #include "app_debug.h"
 #include "netclock.h"
+
 
 void msg_dump(void *buf, int len)
 {
@@ -69,3 +74,64 @@ uint16_t switch_in_cksum(const uint16_t *buf, int bufsz)
     return ~sum;
 }
 
+#ifdef USE_CRYPTO
+int crypto_speed_test(int test_len)
+{
+    uint32_t et;
+    uint32_t st;
+    uint32_t count;
+    char *test_key = "testkey";
+    uint8_t inbuff[2048];
+    uint8_t outbuff[2048];
+    int test_time = 3000;
+    int dec_len;
+    int r;
+
+    if (test_len < 1 || test_len > 2000) {
+        test_len = 1400;
+    }
+
+    crypto_init();
+    crypto_set_password(test_key, strlen(test_key));
+    memset(inbuff, 0, sizeof(inbuff));
+    memset(outbuff, 0, sizeof(outbuff));
+
+    r = 0;
+    st = get_time_ms();
+    et = st;
+    for (count = 0; count < 0xffffffff; count++) {
+        r |= crypto_encrypt(outbuff, inbuff, test_len);
+        if (count % 10000 == 0) {
+            et = get_time_ms() - st;
+            if (et >= test_time)
+                break;
+        }
+    }
+    if (r < 0) {
+        printf("encrypt fail = %d\n", r);
+        return r;
+    }
+    printf("encrypt block=%u/%u cost= %ums, speed = %.1fMB/s\n", test_len, r, et, count / et / 1000.0 * test_len);
+
+    dec_len = r;
+    r = 0;
+    st = get_time_ms();
+    et = st;
+    for (count = 0; count < 0xffffffff; count++) {
+        r |= crypto_decrypt(inbuff, outbuff, dec_len);
+        if (r <= 0)
+            break;
+        if (count % 10000 == 0) {
+            et = get_time_ms() - st;
+            if (et >= test_time)
+                break;
+        }
+    }
+    if (r < 1) {
+        printf("decrypt fail = %d\n", r);
+        return r;
+    }
+    printf("decrypt block=%u/%u cost= %ums, speed = %.1fMB/s\n", dec_len, r, et, count / et / 1000.0 * test_len);
+    return 0;
+}
+#endif

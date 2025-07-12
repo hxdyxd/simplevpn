@@ -32,7 +32,10 @@
 #define CACHE_ROUTE_GC_OUT       (40 * 1000)
 #define CACHE_ROUTE_METRIC_MAX   (16)
 #define CACHE_ROUTE_UPDATE_TIME  (10 * 1000)
-#define HWADDR_LEN            (6)
+#define HWADDR_LEN               (6)
+
+#define CACHE_V6_TIME_OUT        (60 * 1000)
+#define IPV6_ADDR_LEN            (16)
 
 #define cache_router_iter(rt,s,tmp) HASH_ITER(hh, *(rt)->table, s, tmp)
 
@@ -48,5 +51,11 @@ void cache_route_iter(struct cache_router_t *rt,
                            void *p);
 
 int switch_dump_send_router(struct switch_ctx_t *psctx, struct cache_router_t *s, char *msg);
+
+struct cache_v6_t *cache_v6_find(struct cache_v6_t *rt, uint8_t *dest_v6);
+void cache_v6_add(struct cache_v6_t *rt, uint8_t *dest_v6, uint32_t dest);
+int cache_v6_count(struct cache_v6_t *rt);
+void cache_v6_printall(struct cache_v6_t *rt);
+void cache_v6_delete_all(struct cache_v6_t *rt);
 
 #endif

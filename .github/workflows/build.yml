@@ -23,12 +23,23 @@ jobs:
       with:
         submodules: true
 
-    - name: Makefile
+    - name: libsodium
       run: |
-        sudo apt install pkg-config libsodium-dev
-        cd src
-        make V=1 USE_CRYPTO=1
+        sudo apt-get install git gcc make cmake -y
+        mkdir simplevpn/libsodium && cd simplevpn/libsodium
+        cmake -DDISABLE_SODIUM=OFF .. && make -j4
         ./simplevpn -h
-        make clean
-        make V=1 USE_CRYPTO=0
+
+    - name: wolfSSL
+      run: |
+        sudo apt-get install git gcc make cmake -y
+        mkdir simplevpn/wolfSSL && cd simplevpn/wolfSSL
+        cmake -DDISABLE_SODIUM=ON .. && make -j4
+        ./simplevpn -h
+
+    - name: noCrypto
+      run: |
+        sudo apt-get install git gcc make cmake -y
+        mkdir simplevpn/noCrypto && cd simplevpn/noCrypto
+        cmake -DDISABLE_SODIUM=ON -DDISABLE_WOLFSSL=ON .. && make -j4
         ./simplevpn -h

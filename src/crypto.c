@@ -21,7 +21,9 @@
  */
 
 #include <sodium.h>
+#include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "crypto.h"
 #include "netclock.h"
@@ -33,6 +35,11 @@
 static uint8_t key[CRYPTO_KEY_LEN];
 static uint8_t nonce[CRYPTO_NOICE_LEN];
 static uint8_t has_crypto = 0;
+
+char * crypto_version(void)
+{
+    return "libsodium "SODIUM_VERSION_STRING;
+}
 
 int crypto_init(void)
 {
@@ -93,61 +100,4 @@ int crypto_decrypt(uint8_t *out_buf, uint8_t *in_buf, int in_len)
 void crypto_gen_rand(uint8_t *out_buf, int in_len)
 {
     randombytes_buf(out_buf, in_len);
-}
-
-int crypto_speed_test(int test_len)
-{
-    uint32_t et;
-    uint32_t st;
-    uint32_t count;
-    char *test_key = "testkey";
-    uint8_t inbuff[2048];
-    uint8_t outbuff[2048];
-    int test_time = 3000;
-    int dec_len;
-    int r;
-
-    if (test_len < 1 || test_len > 2000) {
-        test_len = 1400;
-    }
-
-    crypto_init();
-    crypto_set_password(test_key, strlen(test_key));
-    randombytes_buf(inbuff, sizeof(inbuff));
-
-    r = 0;
-    st = get_time_ms();
-    et = st;
-    for (count = 0; count < 0xffffffff; count++) {
-        r |= crypto_encrypt(outbuff, inbuff, test_len);
-        if (count % 10000 == 0) {
-            et = get_time_ms() - st;
-            if (et >= test_time)
-                break;
-        }
-    }
-    if (r < 0) {
-        printf("encrypt fail = %d\n", r);
-        return r;
-    }
-    printf("encrypt block=%u cost= %ums, speed = %.1fMB/s\n", test_len, et, count / et / 1000.0 * test_len);
-
-    dec_len = r;
-    r = 0;
-    st = get_time_ms();
-    et = st;
-    for (count = 0; count < 0xffffffff; count++) {
-        r |= crypto_decrypt(inbuff, outbuff, dec_len);
-        if (count % 10000 == 0) {
-            et = get_time_ms() - st;
-            if (et >= test_time)
-                break;
-        }
-    }
-    if (r < 0) {
-        printf("decrypt fail = %d\n", r);
-        return r;
-    }
-    printf("decrypt block=%u cost= %ums, speed = %.1fMB/s\n", dec_len, et, count / et / 1000.0 * test_len);
-    return 0;
 }

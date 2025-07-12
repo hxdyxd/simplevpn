@@ -318,3 +318,77 @@ void cache_router_delete_all(struct cache_router_t *rt)
         free(s);             /* optional; it's up to you! */
     }
 }
+
+
+struct cache_v6_t *cache_v6_find(struct cache_v6_t *rt, uint8_t *dest_v6)
+{
+    struct cache_v6_t *s;
+    HASH_FIND(hh, *rt->table, dest_v6, IPV6_ADDR_LEN, s);
+    return s;
+}
+
+void cache_v6_add(struct cache_v6_t *rt, uint8_t *dest_v6, uint32_t dest)
+{
+    struct cache_v6_t *s = NULL;
+
+    HASH_FIND(hh, *rt->table, dest_v6, IPV6_ADDR_LEN, s);
+    if (!s) {
+        s = (struct cache_v6_t *)calloc(1, sizeof *s);
+        memcpy(&s->dest_v6, dest_v6, IPV6_ADDR_LEN);
+        s->table = rt->table;
+        HASH_ADD(hh, *rt->table, dest_v6, IPV6_ADDR_LEN, s);
+    }
+    s->dest = dest;
+    s->time = rt->time;
+}
+
+int cache_v6_count(struct cache_v6_t *rt)
+{
+    if(rt->table == NULL)
+        return 0;
+    return HASH_COUNT(*rt->table);
+}
+
+void cache_v6_printall(struct cache_v6_t *rt)
+{
+    struct sockaddr_storage v6addr;
+    struct in_addr ipaddr;
+    char *dest_ip;
+    char addr_buff[INET6_ADDRSTRLEN];
+    const char *ip = "";
+    uint16_t port = 0;
+    struct cache_v6_t *s, *tmp;
+    uint32_t cache_time = 0;
+    cache_time = get_time_ms();
+
+    HASH_ITER(hh, *rt->table, s, tmp) {
+        uint32_t time_dif = cache_time - s->time;
+        vpn_convert_ipv6_to_sockaddr(&v6addr, s->dest_v6, 0);
+        vpn_udp_ntop(&v6addr, addr_buff, sizeof(addr_buff), &ip, &port);
+        ipaddr.s_addr = htonl(s->dest);
+        dest_ip = strdup(inet_ntoa(ipaddr));
+
+        if (time_dif > CACHE_V6_TIME_OUT) {
+            APP_WARN("delete, v6dest=%s next=%s time=%u\n",
+                        ip, dest_ip, time_dif);
+            HASH_DEL(*rt->table, s);  /* user: pointer to delete */
+            free(s);             /* optional; it's up to you! */
+            continue;
+        }
+
+        APP_INFO(" v6dest=%s next=%s time=%u\n", ip, dest_ip, time_dif);
+        if (dest_ip)
+            free(dest_ip);
+        //switch_router_dump(s, "");
+    }
+}
+
+void cache_v6_delete_all(struct cache_v6_t *rt)
+{
+    struct cache_v6_t *s, *tmp;
+
+    HASH_ITER(hh, *rt->table, s, tmp) {
+        HASH_DEL(*rt->table, s);  /* user: pointer to deletee */
+        free(s);             /* optional; it's up to you! */
+    }
+}

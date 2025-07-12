@@ -138,11 +138,20 @@ struct cache_router_t {
     struct cache_router_t **table;
 };
 
+struct cache_v6_t {
+    uint8_t              dest_v6[16];
+    uint32_t             dest;
+    uint32_t             time;
+    UT_hash_handle       hh;
+    struct cache_v6_t ** table;
+};
+
 struct switch_main_t {
-    struct switch_ctx_t   head;
-    struct cache_router_t param;
-    uint32_t default_mac;
-    uint32_t current_time;
+    struct switch_ctx_t    head;
+    struct cache_router_t  param;
+    struct cache_v6_t *    v6table;
+    uint32_t               default_mac;
+    uint32_t               current_time;
 };
 
 struct switch_args_t {
@@ -192,11 +201,6 @@ typedef struct {
     uint32_t default_addr;
     struct switch_ctx_t *src_pctx;
 } UDP_CTX;
-
-//utils
-void msg_dump(void *buf, int len);
-uint16_t switch_in_cksum(const uint16_t *buf, int bufsz);
-
 
 
 #endif

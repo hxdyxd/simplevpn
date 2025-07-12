@@ -26,6 +26,7 @@
 #include "app_debug.h"
 #include "daemon.h"
 #include "simplevpn.h"
+#include "utils.h"
 #ifdef USE_CRYPTO
 #include "crypto.h"
 #endif
@@ -40,7 +41,11 @@
 void usage(void)
 {
     PRINTF("\n");
+#ifdef USE_CRYPTO
+    PRINTF("simplevpn %s (%s)\n\n", VERSION, crypto_version());
+#else
     PRINTF("simplevpn %s\n\n", VERSION);
+#endif
     PRINTF("  usage:\n\n");
     PRINTF("    simplevpn\n");
     PRINTF("\n");

@@ -26,14 +26,12 @@ CFLAGS += -O2 -Wall -g -std=gnu99 $(C_DEFS)
 ifeq ($(USE_CRYPTO), 1)
 OBJS +=  crypto.o
 CFLAGS += -DUSE_CRYPTO
-CFLAGS += $(shell $(PKG_CONFIG) --cflags libsodium)
 ifneq ($(STATIC), 1)
+CFLAGS += $(shell $(PKG_CONFIG) --cflags libsodium)
 LDFLAGS += $(shell $(PKG_CONFIG) --libs libsodium)
 endif
 endif
 
-
-LDFLAGS += -lpthread
 
 quiet_CC  =      @echo "  CC      $@"; $(CC)
 quiet_LD  =      @echo "  LD      $@"; $(LD)
