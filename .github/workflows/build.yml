@@ -26,20 +26,14 @@ jobs:
     - name: libsodium
       run: |
         sudo apt-get install git gcc make cmake -y
-        mkdir simplevpn/libsodium && cd simplevpn/libsodium
-        cmake -DDISABLE_SODIUM=OFF .. && make -j4
-        ./simplevpn -h
+        mkdir libsodium && cd libsodium && cmake -DDISABLE_SODIUM=OFF .. && make -j4 && ./simplevpn -h
 
     - name: wolfSSL
       run: |
         sudo apt-get install git gcc make cmake -y
-        mkdir simplevpn/wolfSSL && cd simplevpn/wolfSSL
-        cmake -DDISABLE_SODIUM=ON .. && make -j4
-        ./simplevpn -h
+        mkdir wolfSSL && cd wolfSSL && cmake -DDISABLE_SODIUM=ON .. && make -j4 && ./simplevpn -h
 
     - name: noCrypto
       run: |
         sudo apt-get install git gcc make cmake -y
-        mkdir simplevpn/noCrypto && cd simplevpn/noCrypto
-        cmake -DDISABLE_SODIUM=ON -DDISABLE_WOLFSSL=ON .. && make -j4
-        ./simplevpn -h
+        mkdir noCrypto && cd noCrypto && cmake -DDISABLE_SODIUM=ON -DDISABLE_WOLFSSL=ON .. && make -j4 && ./simplevpn -h

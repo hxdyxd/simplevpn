@@ -44,6 +44,7 @@
 #include "cache_table.h"
 #include "udp_alloc.h"
 #include "rip.h"
+#include "utils.h"
 #ifdef USE_CRYPTO
 #include "crypto.h"
 #endif
