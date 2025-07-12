@@ -92,48 +92,53 @@ if(NOT DISABLE_SODIUM)
 
     set(SODIUM_INSTALL_DIR "${CMAKE_BINARY_DIR}/libsodium")
     file(MAKE_DIRECTORY "${SODIUM_INSTALL_DIR}/include")
+    file(MAKE_DIRECTORY "${SODIUM_INSTALL_DIR}/lib")
 
     ExternalProject_Add(
-        libsodium_external
-        URL "https://download.libsodium.org/libsodium/releases/libsodium-1.0.18.tar.gz"
-        URL_HASH SHA256=6f504490b342a4f8a4c4a02fc9b866cbef8622d5df4e5452b46be121e46636c1
-        PREFIX "${SODIUM_INSTALL_DIR}"
+        libsodium
+        URL            "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20.tar.gz"
+        URL_HASH       SHA256=ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19
+        PREFIX        "${SODIUM_INSTALL_DIR}"
+        INSTALL_DIR   "${SODIUM_INSTALL_DIR}"
         CONFIGURE_COMMAND 
             ${CONFIGURE_ENV}
             <SOURCE_DIR>/configure
-            --prefix=<INSTALL_DIR>
+            --prefix=${SODIUM_INSTALL_DIR}
             --enable-static
             --enable-shared
             ${CONFIGURE_OPTS}
-        BUILD_COMMAND make
+        BUILD_COMMAND   make
         INSTALL_COMMAND make install
-        BUILD_IN_SOURCE 1
+        BUILD_IN_SOURCE 0
+        BUILD_BYPRODUCTS 
+            "${SODIUM_INSTALL_DIR}/lib/libsodium.a"
+            "${SODIUM_INSTALL_DIR}/lib/libsodium.so"
     )
 
     # import libsodium
-    add_library(libsodium STATIC IMPORTED)
-    add_dependencies(libsodium libsodium_external)
+    add_library(libsodium_static STATIC IMPORTED)
+    add_dependencies(libsodium_static libsodium)
     
-    set_target_properties(libsodium PROPERTIES
+    set_target_properties(libsodium_static PROPERTIES
         IMPORTED_LOCATION "${SODIUM_INSTALL_DIR}/lib/libsodium.a"
         INTERFACE_INCLUDE_DIRECTORIES "${SODIUM_INSTALL_DIR}/include"
     )
 
     # import libsodium
-    add_library(libsodium_so SHARED IMPORTED)
-    add_dependencies(libsodium_so libsodium_external)
+    add_library(libsodium_shared SHARED IMPORTED)
+    add_dependencies(libsodium_shared libsodium)
     
-    set_target_properties(libsodium_so PROPERTIES
+    set_target_properties(libsodium_shared PROPERTIES
         IMPORTED_LOCATION "${SODIUM_INSTALL_DIR}/lib/libsodium.so"
         INTERFACE_INCLUDE_DIRECTORIES "${SODIUM_INSTALL_DIR}/include"
     )
 
     add_dependencies(${PROJECT_STATIC_NAME} libsodium)
-    target_link_libraries(${PROJECT_STATIC_NAME} libsodium)
+    target_link_libraries(${PROJECT_STATIC_NAME} libsodium_static)
     target_include_directories(${PROJECT_STATIC_NAME} PRIVATE "${SODIUM_INSTALL_DIR}/include")
 
-    add_dependencies(${PROJECT_SHARED_NAME} libsodium_so)
-    target_link_libraries(${PROJECT_SHARED_NAME} libsodium_so)
+    add_dependencies(${PROJECT_SHARED_NAME} libsodium)
+    target_link_libraries(${PROJECT_SHARED_NAME} libsodium_shared)
     target_include_directories(${PROJECT_SHARED_NAME} PRIVATE "${SODIUM_INSTALL_DIR}/include")
 endif()
 
