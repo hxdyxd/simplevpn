@@ -77,8 +77,6 @@ int crypto_is_enabled(void)
     return has_crypto;
 }
 
-    byte outAuthTag[CHACHA20_POLY1305_AEAD_AUTHTAG_SIZE];
-
 int crypto_encrypt(uint8_t *out_buf, uint8_t *in_buf, int in_len)
 {
     int ret;
@@ -128,7 +126,6 @@ void crypto_gen_rand(uint8_t *out_buf, int len)
     wc_RNG_GenerateBlock(&rng, out_buf, len);
 }
 
-// 清理资源 (可选)
 void crypto_cleanup(void)
 {
     wc_FreeRng(&rng);

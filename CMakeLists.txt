@@ -17,7 +17,8 @@ if(DEFINED CMAKE_TOOLCHAIN_FILE)
 endif()
 
 option(DISABLE_SODIUM "Disable libsodium dependency" ON)
-option(DISABLE_WOLFSSL "Disable mbedtls dependency" OFF)
+option(DISABLE_WOLFSSL "Disable mbedtls dependency" ON)
+option(DISABLE_OPENSSL "Disable openssl dependency" OFF)
 
 # Base files
 set(BASE_SOURCES
@@ -65,6 +66,13 @@ elseif(NOT DISABLE_WOLFSSL)
     )
     add_definitions(-DUSE_CRYPTO)
     message(STATUS "wolfSSL enabled")
+elseif(NOT DISABLE_OPENSSL)
+    list(APPEND  BASE_SOURCES
+        src/blake2b-ref.c
+        src/crypto_boringssl.c
+    )
+    add_definitions(-DUSE_CRYPTO)
+    message(STATUS "openssl enabled")
 endif()
 
 set(PROJECT_STATIC_NAME "${PROJECT_NAME}_static")
@@ -173,6 +181,26 @@ elseif(NOT DISABLE_WOLFSSL)
 
     add_dependencies(${PROJECT_SHARED_NAME} wolfssl)
     target_link_libraries(${PROJECT_SHARED_NAME} wolfssl)
+elseif(NOT DISABLE_OPENSSL)
+    include(FetchContent)
+
+    FetchContent_Declare(
+        boringssl
+        GIT_REPOSITORY  "https://github.com/google/boringssl.git"
+        GIT_TAG         0.20250701.0
+        GIT_SHALLOW     TRUE
+    )
+
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(BUILD_SHARED_LIBS  OFF)
+
+    FetchContent_MakeAvailable(boringssl)
+
+    add_dependencies(${PROJECT_STATIC_NAME} crypto)
+    target_link_libraries(${PROJECT_STATIC_NAME} crypto)
+
+    add_dependencies(${PROJECT_SHARED_NAME} crypto)
+    target_link_libraries(${PROJECT_SHARED_NAME} crypto)
 endif()
 
 # install
