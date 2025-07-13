@@ -36,7 +36,7 @@ jobs:
     - name: OpenSSL
       run: |
         sudo apt-get install git gcc make cmake -y
-        mkdir wolfSSL && cd wolfSSL && cmake .. && make -j4 && ./simplevpn -h && ./simplevpn -s 1400
+        mkdir OpenSSL && cd OpenSSL && cmake .. && make -j4 && ./simplevpn -h && ./simplevpn -s 1400
 
     - name: noCrypto
       run: |
