@@ -555,18 +555,31 @@ struct switch_ctx_t *switch_add_accepted_tcp(struct switch_main_t *smb, struct s
     sock  = accept(ctx->tcp.sock, (struct sockaddr *)&psctx->tcp.addr, &sin_size);
     if (sock < 0) {
         APP_WARN("accept(fd = %d) %s\n", ctx->tcp.sock, strerror(errno));
+        free(psctx);
         return NULL;
     }
 
     r = vpn_sock_set_blocking(sock, 0);
     if (r < 0) {
         APP_ERROR("sock_setblocking(fd = %d)\n", sock);
+        close(sock);
+        free(psctx);
         return NULL;
     }
 
     r = vpn_sock_set_keepalive(sock, 1, TCP_KEEPALIVE_TIME, TCP_KEEPALIVE_INTVL, TCP_KEEPALIVE_CNT);
     if (r < 0) {
         APP_ERROR("sock_set_keepalive(fd = %d)\n", sock);
+        close(sock);
+        free(psctx);
+        return NULL;
+    }
+
+    r = vpn_sock_tcp_nodelay(sock, VPN_TCP_NODELAY);
+    if (r < 0) {
+        APP_ERROR("sock_tcp_nodelay(fd = %d)\n", sock);
+        close(sock);
+        free(psctx);
         return NULL;
     }
 
@@ -1311,13 +1324,15 @@ int switch_run(struct switch_args_t *args)
 
             v6rt.time = smb.current_time;
             v6rt.table = &smb.v6table;
-            APP_INFO("active count: sock = %d, router = %d, router_v6 = %d\n",
-                     sock_count, cache_router_count(&smb.param), cache_v6_count(&v6rt));
-            list_for_each_entry_safe(sctx, stmp, &smb.head.list, list) {
-                switch_dump_send_router(sctx, NULL, "sock_list:");
+            if (DEBUG_INFO) {
+                APP_INFO("active count: sock = %d, router = %d, router_v6 = %d\n",
+                         sock_count, cache_router_count(&smb.param), cache_v6_count(&v6rt));
+                list_for_each_entry_safe(sctx, stmp, &smb.head.list, list) {
+                    switch_dump_send_router(sctx, NULL, "sock_list:");
+                }
             }
-            cache_route_printall(&smb.param);
-            cache_v6_printall(&v6rt);
+            cache_route_update(&smb.param);
+            cache_v6_update(&v6rt);
         }
 
         if (smb.current_time - last_heart_time > CACHE_ROUTE_UPDATE_TIME) {

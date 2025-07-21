@@ -43,7 +43,7 @@ void cache_router_add(struct cache_router_t *rt);
 struct cache_router_t *cache_router_find(struct cache_router_t *rt, uint32_t dest_router);
 struct cache_router_t *cache_router_search(struct cache_router_t *rt, uint32_t dest_router);
 struct cache_router_t *cache_router_find_by_addr(struct cache_router_t *rt, struct sockaddr_storage *addr);
-void cache_route_printall(struct cache_router_t *rt);
+void cache_route_update(struct cache_router_t *rt);
 int cache_router_count(struct cache_router_t *rt);
 void cache_router_delete_all(struct cache_router_t *rt);
 void cache_route_iter(struct cache_router_t *rt,
@@ -55,7 +55,7 @@ int switch_dump_send_router(struct switch_ctx_t *psctx, struct cache_router_t *s
 struct cache_v6_t *cache_v6_find(struct cache_v6_t *rt, uint8_t *dest_v6);
 void cache_v6_add(struct cache_v6_t *rt, uint8_t *dest_v6, uint32_t dest);
 int cache_v6_count(struct cache_v6_t *rt);
-void cache_v6_printall(struct cache_v6_t *rt);
+void cache_v6_update(struct cache_v6_t *rt);
 void cache_v6_delete_all(struct cache_v6_t *rt);
 
 #endif

@@ -29,6 +29,8 @@
 #include <sys/time.h>
 #include <arpa/inet.h>
 
+#define DEBUG_INFO     (log_level == log_debug)
+#define TRACE_INFO     (log_level == log_trace)
 #define TEST         (0)
 
 #if TEST
@@ -260,7 +262,7 @@ struct cache_router_t *cache_router_find_by_addr(struct cache_router_t *rt, stru
     return s;
 }
 
-void cache_route_printall(struct cache_router_t *rt)
+void cache_route_update(struct cache_router_t *rt)
 {
     struct cache_router_t *s, *tmp;
     uint32_t cache_time = 0;
@@ -292,7 +294,9 @@ void cache_route_printall(struct cache_router_t *rt)
             continue;
         }
 
-        switch_router_dump(s, "");
+        if (DEBUG_INFO) {
+            switch_router_dump(s, "");
+        }
     }
 }
 
@@ -349,7 +353,7 @@ int cache_v6_count(struct cache_v6_t *rt)
     return HASH_COUNT(*rt->table);
 }
 
-void cache_v6_printall(struct cache_v6_t *rt)
+void cache_v6_update(struct cache_v6_t *rt)
 {
     struct sockaddr_storage v6addr;
     struct in_addr ipaddr;
@@ -376,7 +380,7 @@ void cache_v6_printall(struct cache_v6_t *rt)
             continue;
         }
 
-        APP_INFO(" v6dest=%s next=%s time=%u\n", ip, dest_ip, time_dif);
+        APP_TRACE(" v6dest=%s next=%s time=%u\n", ip, dest_ip, time_dif);
         if (dest_ip)
             free(dest_ip);
         //switch_router_dump(s, "");

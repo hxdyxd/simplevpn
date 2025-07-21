@@ -139,7 +139,7 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port, const char *i
 
     r = vpn_sock_set_blocking(sock, 0);
     if (r < 0) {
-        APP_WARN("vpn_sock_set_blocking(): %s\n", strerror(errno));
+        APP_WARN("sock_set_blocking(fd = %d): %s\n", sock, strerror(errno));
         close(sock);
         freeaddrinfo(res);
         return -1;
@@ -170,6 +170,14 @@ int vpn_tcp_alloc(int if_bind, const char *host, const char *port, const char *i
             return -1;
         }
     } else {
+        r = vpn_sock_tcp_nodelay(sock, VPN_TCP_NODELAY);
+        if (r < 0) {
+            APP_ERROR("sock_tcp_nodelay(fd = %d, %s:%s): %s\n", sock, host, port, strerror(errno));
+            close(sock);
+            freeaddrinfo(res);
+            return -1;
+        }
+
         r = connect(sock, res->ai_addr, res->ai_addrlen);
         if (r < 0 && errno != EINPROGRESS) {
             APP_ERROR("connect(fd = %d, %s:%s): %s\n", sock, host, port, strerror(errno));
@@ -321,5 +329,17 @@ int vpn_sock_bind_interface(int sock, const char *ifname)
         return -1;
     }
     APP_INFO("bind sock=%d to interface: %s\n", sock, ifname);
+    return ret;
+}
+
+int vpn_sock_tcp_nodelay(int sock, int enable)
+{
+    int ret;
+    int flag = enable;
+    ret = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    if (ret < 0) {
+        APP_ERROR("setsockopt(TCP_NODELAY) failed: %s\n", strerror(errno));
+        return -1;
+    }
     return ret;
 }
