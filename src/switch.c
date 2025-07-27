@@ -136,9 +136,7 @@ static int switch_write(struct switch_ctx_t *psctx, UDP_CTX *ctx_p)
         }
 
         if (psctx->tcp.write_size) {
-            if (psctx->tcp.write_pos > psctx->tcp.write_size) {
-                APP_WARN("switch_write %d: write buffer is full, pos = %d, size = %d\n", psctx->tcp.sock, psctx->tcp.write_pos, psctx->tcp.write_size);
-            }
+            ;//lost packet
         } else {
             uint16_t write_size = ctx_p->clen;
 
@@ -211,16 +209,13 @@ int switch_write_both(struct switch_ctx_t *ctx, UDP_CTX *ctx_p)
     return switch_write(ctx, ctx_p);
 }
 
-void send_to_self(UDP_CTX *ctx_p)
+int send_to_self(UDP_CTX *ctx_p)
 {
     if (DEBUG_INFO) {
         switch_dump_send_router(ctx_p->src_pctx, NULL, "[self]");
     }
 
-    int r = switch_write_both(ctx_p->src_pctx, ctx_p);
-    if (r < 0) {
-        return;
-    }
+    return switch_write_both(ctx_p->src_pctx, ctx_p);
 }
 
 static int send_icmp_packet(UDP_CTX *ctx, struct switch_main_t *psmb, uint8_t type, uint8_t code)
@@ -261,7 +256,7 @@ static int send_icmp_packet(UDP_CTX *ctx, struct switch_main_t *psmb, uint8_t ty
     return 0;
 }
 
-static void send_to_target_router(const struct cache_router_t *rt, struct cache_router_t *s, void *p)
+static int send_to_target_router(const struct cache_router_t *rt, struct cache_router_t *s, void *p)
 {
     UDP_CTX *ctx_p = (UDP_CTX *)p;
 
@@ -271,10 +266,11 @@ static void send_to_target_router(const struct cache_router_t *rt, struct cache_
 
     int r = switch_write_both(s->ctx, ctx_p);
     if (r < 0) {
-        return;
+        return r;
     }
     s->tx_bytes += ctx_p->clen;
     s->tx_pks++;
+    return r;
 }
 
 static void send_to_router_item(const struct cache_router_t *rt, struct cache_router_t *target, void *p)
@@ -289,7 +285,7 @@ static void send_to_router_item(const struct cache_router_t *rt, struct cache_ro
     //send_to_target_router(rt, target, p);
 }
 
-static void send_to_router(UDP_CTX *ctx_p, struct switch_main_t *smb)
+static int send_to_router(UDP_CTX *ctx_p, struct switch_main_t *smb)
 {
     struct switch_pack_t *head = (struct switch_pack_t *)ctx_p->cbuf;
     ctx_p->daddr = ntohl(head->daddr);
@@ -298,7 +294,7 @@ static void send_to_router(UDP_CTX *ctx_p, struct switch_main_t *smb)
     if (0xffffffff == ctx_p->daddr) {
         ctx_p->type = 'b';
         cache_route_iter(&smb->param, send_to_router_item, ctx_p);
-        return;
+        return 0;
     }
 
     struct cache_router_t *target = cache_router_search(&smb->param, ctx_p->daddr);
@@ -314,26 +310,26 @@ static void send_to_router(UDP_CTX *ctx_p, struct switch_main_t *smb)
     if (!target || target->metric >= CACHE_ROUTE_METRIC_MAX) {
         APP_DEBUG("[%c]can't found target %08x\n", ctx_p->type, ctx_p->daddr);
         send_icmp_packet(ctx_p, smb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH);
-        return;
+        return -1;
     }
     if (!target->ctx || !target->ctx->type) {
         APP_WARN("[%c]can't found target device  %08x\n", ctx_p->type, ctx_p->daddr);
         send_icmp_packet(ctx_p, smb, ICMP_DEST_UNREACH, ICMP_PROT_UNREACH);
-        return;
+        return -1;
     }
 
     if (ctx_p->daddr != smb->param.router_mac && head->hop_limit == 0) {
         APP_WARN("[%c]ttl is zero %08x -> %08x\n", ctx_p->type, ctx_p->saddr, ctx_p->daddr);
         send_icmp_packet(ctx_p, smb, ICMP_TIME_EXCEEDED, ICMP_EXC_TTL);
-        return;
+        return -1;
     }
 
     if (ctx_p->saddr == target->dest_router) {
         APP_WARN("[%c]send to self %08x!\n", ctx_p->type, target->dest_router);
-        return;
+        return -1;
     }
 
-    send_to_target_router(&smb->param, target, ctx_p);
+    return send_to_target_router(&smb->param, target, ctx_p);
 }
 
 int switch_rebind_udp(struct switch_ctx_t *ctx)
@@ -634,6 +630,14 @@ struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, const 
         return NULL;
     }
 
+    err = vpn_sock_set_blocking(fd, 0);
+    if (err < 0) {
+        APP_ERROR("sock_setblocking(fd = %d)\n", fd);
+        close(fd);
+        free(psctx);
+        return NULL;
+    }
+
     APP_INFO("Open tun/tap device: %s for reading...\n", ifr.ifr_name);
 
     char sys_cmd[256];
@@ -662,11 +666,20 @@ struct switch_ctx_t *switch_add_tap(struct switch_main_t *smb, int flags, const 
 
 struct switch_ctx_t *switch_add_tun_native(struct switch_main_t *smb, int tun_fd, char *name)
 {
+    int err;
     struct switch_ctx_t *psctx = malloc(sizeof(struct switch_ctx_t));
     if (!psctx) {
         APP_ERROR("Failed to alloc memory\n");
         return NULL;
     }
+
+    err = vpn_sock_set_blocking(tun_fd, 0);
+    if (err < 0) {
+        APP_ERROR("sock_setblocking(fd = %d)\n", tun_fd);
+        free(psctx);
+        return NULL;
+    }
+
     psctx->type = SWITCH_TAP;
     psctx->events = SWITCH_POLLIN;
     psctx->tap.fd = tun_fd;
@@ -1037,8 +1050,58 @@ int switch_read_both(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct swi
     return ctx->plen;
 }
 
-int switch_send_heart_timer(struct switch_main_t *psmb, void *in, void *out, int len)
+int switch_forward(struct switch_main_t *psmb, struct switch_ctx_t *sctx)
 {
+    unsigned char in_buffer[BUF_SIZE * 2];
+    unsigned char out_buffer[BUF_SIZE * 2];
+    int rlen, wlen;
+    int packet_cnt = 0;
+
+    while (1) {
+        UDP_CTX ctx;
+        ctx.src_pctx = sctx;
+
+        rlen = switch_read_both(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, psmb);
+        if (rlen <= 0) {
+            break;
+        }
+
+        if(rlen < 20) {
+            APP_WARN("invalid packet size - received %d bytes (minimum threshold: %d)\n", rlen, 20);
+            continue;
+        }
+
+        /* switch or client todo... */
+        struct iphdr *iph = (struct iphdr *)ctx.pbuf;
+        uint32_t daddr = ntohl(iph->daddr);
+        uint8_t version = iph->version;
+
+        if (version == 4) {
+            if (switch_in_cksum((uint16_t *)iph, iph->ihl * 4)) {
+                APP_WARN("checksum validation failed\n");
+                continue;
+            }
+
+            if (0xffffffff == daddr && 0xff == iph->protocol) {
+                switch_process_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, psmb);
+                continue;
+            }
+        }
+
+        ctx.type = 'n';
+        wlen = send_to_router(&ctx, psmb);
+        if (wlen <= 0) {
+            break;
+        }
+        packet_cnt++;
+    }
+    return packet_cnt;
+}
+
+int switch_send_heart_timer(struct switch_main_t *psmb)
+{
+    unsigned char in_buffer[BUF_SIZE * 2];
+    unsigned char out_buffer[BUF_SIZE * 2];
     struct switch_ctx_t *sctx, *stmp;
     uint32_t cache_time = get_time_ms();
 
@@ -1086,15 +1149,13 @@ int switch_send_heart_timer(struct switch_main_t *psmb, void *in, void *out, int
             }
         }
 
-        switch_send_heart(&ctx, in, out, len, psmb);
+        switch_send_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, psmb);
     }
     return 0;
 }
 
 int switch_run(struct switch_args_t *args)
 {
-    unsigned char in_buffer[BUF_SIZE * 2];
-    unsigned char out_buffer[BUF_SIZE * 2];
     uint32_t last_heart_time = 0, last_route_time = 0;
     int sctx_count = 0;
     int ret = -1;
@@ -1280,38 +1341,7 @@ int switch_run(struct switch_args_t *args)
             }
 
             if (FD_ISSET(cur_fd, &readset)) {
-                UDP_CTX ctx;
-                ctx.src_pctx = sctx;
-
-                int rlen = switch_read_both(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &smb);
-                if (rlen <= 0) {
-                    continue;
-                }
-
-                if(rlen < 20) {
-                    APP_WARN("invalid packet size - received %d bytes (minimum threshold: %d)\n", rlen, 20);
-                    continue;
-                }
-
-                /* switch or client todo... */
-                struct iphdr *iph = (struct iphdr *)ctx.pbuf;
-                uint32_t daddr = ntohl(iph->daddr);
-                uint8_t version = iph->version;
-
-                if (version == 4) {
-                    if (switch_in_cksum((uint16_t *)iph, iph->ihl * 4)) {
-                        APP_WARN("checksum validation failed\n");
-                        continue;
-                    }
-
-                    if (0xffffffff == daddr && 0xff == iph->protocol) {
-                        switch_process_heart(&ctx, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE, &smb);
-                        continue;
-                    }
-                }
-
-                ctx.type = 'n';
-                send_to_router(&ctx, &smb);
+                switch_forward(&smb, sctx);
             }
 
             if (FD_ISSET(cur_fd, &writeset)) {
@@ -1337,7 +1367,7 @@ int switch_run(struct switch_args_t *args)
 
         if (smb.current_time - last_heart_time > CACHE_ROUTE_UPDATE_TIME) {
             last_heart_time = smb.current_time;
-            switch_send_heart_timer(&smb, &in_buffer[BUF_SIZE], &out_buffer[BUF_SIZE], BUF_SIZE);
+            switch_send_heart_timer(&smb);
         }
     }
 exit:

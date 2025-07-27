@@ -28,7 +28,7 @@
 #include "simplevpn.h"
 
 //rip
-void send_to_self(UDP_CTX *ctx_p);
+int send_to_self(UDP_CTX *ctx_p);
 int switch_send_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct switch_main_t *psmb);
 int switch_process_heart(UDP_CTX *ctx, void *buff1, void *buff2, int len, struct switch_main_t *psmb);
 
